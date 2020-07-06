@@ -79,6 +79,7 @@ class bprH(object):
                 C_u_ta = len(I_t_u.intersection(I_a_u)) / len(I_a_u) if len(I_a_u) != 0 else 0
 
                 C_u_X = 2 * C_u_at * C_u_ta / (C_u_ta + C_u_at) if C_u_ta + C_u_at != 0 else (1 / self.omega)
+                # set final alpha_u to 1 if C_u_ta + C_u_at == 0
                 C_u[u][x] = C_u_X
 
         temp = pd.DataFrame.from_dict(C_u, orient='index')
