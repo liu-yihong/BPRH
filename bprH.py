@@ -52,6 +52,9 @@ class bprH(object):
         self.alpha_u = None
         self.S = None
 
+        self.train_data = None
+        self.test_data = None
+
     def auxiliary_target_correlation(self, X, y=None):
         """
         Calculate auxiliary-target correlation C for every user and each types of auxiliary action
@@ -110,7 +113,9 @@ class bprH(object):
 
         return S
 
-    def fit(self, X, original_item_list, original_user_list, num_iter=200, y=None, saved_path='data/item-set-coselection.pkl'):
+    def fit(self, X, original_item_list, original_user_list, num_iter=200, y=None,
+            saved_path='data/item-set-coselection.pkl'):
+        self.train_data = X
         # TODO: make sure train and test works with inconsistent user and item list
 
         # rename user and item
@@ -272,10 +277,18 @@ class bprH(object):
                 # formatted automatically based on argument's datatype
                 t.set_postfix(loss=bprh_loss)
 
-    def predict_estimation(self, user_to_predict, item_to_predict):
+    def predict_estimation(self, user_to_predict, item_to_predict=None):
+        if item_to_predict is None:
+            return np.dot(self.U[adv_index(self.user_original_id_list, user_to_predict), :], self.V)
+        else:
+            return np.dot(self.U[adv_index(self.user_original_id_list, user_to_predict), :],
+                          self.V[:, adv_index(self.item_original_id_list, item_to_predict)])
 
-        return np.dot(self.U[adv_index(self.user_original_id_list, user_to_predict), :],
-                      self.V[:, adv_index(self.item_original_id_list, item_to_predict)])
+    def recommend(self, user_to_recommend, K=5):
+        if self.train_data is None:
+            print("Train data has not been feed")
+            return None
+        return None
 
     def precision_K(self, prediction, test, K=5, y=None):
         return None
