@@ -1,7 +1,6 @@
 import pickle
 import pandas as pd
 import numpy as np
-import math
 from random import sample
 from tqdm import tqdm, trange
 
@@ -14,9 +13,21 @@ def sigmoid(z):
     return 1 / (1 + np.exp(-z))
 
 
+def load_model(load_path):
+    with open(load_path, 'rb') as model_input:
+        model_instance = pickle.load(model_input)
+    return model_instance
+
+
+def save_model(model_instance, saved_path):
+    with open(saved_path + '/model.pkl', 'wb') as model_output:
+        pickle.dump(model_instance, model_output, pickle.HIGHEST_PROTOCOL)
+    return None
+
+
 class bprH(object):
 
-    def __init__(self, dim, omega, rho, lambda_u, lambda_v, lambda_b, gamma, random_state=None):
+    def __init__(self, dim, omega, rho, lambda_u, lambda_v, lambda_b, gamma, num_iter=200, random_state=None):
         """
 
         :param dim: the dimension of latent vector
@@ -36,11 +47,13 @@ class bprH(object):
         self.lambda_b = lambda_b
         self.gamma = gamma
         self.random_state = random_state
+        self.num_iter = num_iter
 
         self.user_original_id_list = None
         self.item_original_id_list = None
         self.item_list = None
         self.user_list = None
+        self.user_purchased_item = None
 
         self.num_u = None
         self.num_i = None
@@ -114,9 +127,8 @@ class bprH(object):
 
         return S
 
-    def fit(self, X, original_item_list, original_user_list, num_iter=200, y=None,
+    def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
             saved_path='data/item-set-coselection.pkl'):
-        self.train_data = X
         # TODO: make sure train and test works with inconsistent user and item list
 
         # rename user and item
@@ -125,6 +137,12 @@ class bprH(object):
 
         X.UserID = X.UserID.apply(lambda x: self.user_original_id_list.index(x))
         X.ItemID = X.ItemID.apply(lambda x: self.item_original_id_list.index(x))
+
+        eval_X.UserID = eval_X.UserID.apply(lambda x: self.user_original_id_list.index(x))
+        eval_X.ItemID = eval_X.ItemID.apply(lambda x: self.item_original_id_list.index(x))
+
+        self.train_data = X
+        self.test_data = eval_X
 
         self.item_list = sorted(set([iter[0] for iter in enumerate(self.item_original_id_list)]))
         self.user_list = sorted(set([iter[0] for iter in enumerate(self.user_original_id_list)]))
@@ -151,7 +169,7 @@ class bprH(object):
         self.estimation = np.dot(self.U, self.V)
 
         # Start Iteration
-        with trange(num_iter) as t:
+        with trange(self.num_iter) as t:
             for index in t:
                 # Description will be displayed on the left
                 t.set_description('ITER %i' % index)
@@ -192,7 +210,10 @@ class bprH(object):
 
                 # calculate intermediate variables
                 # get specific alpha_u
-                spec_alpha_u = self.alpha_u[self.alpha_u.UserID == u].alpha.values[0]
+                try:
+                    spec_alpha_u = self.alpha_u[self.alpha_u.UserID == u].alpha.values[0]
+                except:
+                    spec_alpha_u = 1
                 u_index = u
                 U_u = self.U[u_index, :-1]
                 # get r_hat_uIJ and r_hat_uJK
@@ -229,6 +250,12 @@ class bprH(object):
                                  (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
                              b_K if len(K) != 0 else 0) ** 2)
                 bprh_loss = f_Theta - regula
+
+                # calculate metrics on test data
+                user_to_eval = sorted(set(eval_X.UserID))
+                scoring_list_5, precision_5, recall_5 = self.scoring(user_to_eval=user_to_eval, ground_truth=eval_X, K=5)
+                scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval, ground_truth=eval_X,
+                                                                     K=10)
 
                 # get derivatives and update
 
@@ -276,7 +303,7 @@ class bprH(object):
                 self.estimation = np.dot(self.U, self.V)
                 # Postfix will be displayed on the right,
                 # formatted automatically based on argument's datatype
-                t.set_postfix(loss=bprh_loss)
+                t.set_postfix(loss=bprh_loss, precision_5=precision_5, recall_5=recall_5, precision_10=precision_10, recall_10=recall_10)
 
     def predict_estimation(self, user_to_predict, item_to_predict=None):
         if item_to_predict is None:
@@ -285,11 +312,76 @@ class bprH(object):
             return np.dot(self.U[adv_index(self.user_original_id_list, user_to_predict), :],
                           self.V[:, adv_index(self.item_original_id_list, item_to_predict)])
 
-    def recommend(self, user_to_recommend, K=5):
+    def recommend(self, user_to_recommend=None, K=5):
         if self.train_data is None:
             print("Train data has not been feed")
             return None
-        return None
+        if user_to_recommend is None:
+            user_to_recommend = self.user_list
 
-    def precision_K(self, prediction, test, K=5, y=None):
-        return None
+        estimated_pref = self.predict_estimation(user_to_predict=self.user_original_id_list)
+
+        # build the dict that user's purchased item
+        user_purchased_item = dict()
+        # build the rec list for users
+        user_rec_list = []
+
+        # print("Build User's Purchased Item Dict & Rec List")
+        # user_set_bar = tqdm(user_to_recommend)
+        for u in user_to_recommend:
+            user_purchased_item[u] = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
+            est_pref_of_u = estimated_pref[u, :]
+            #
+            est_pref_sort_index = est_pref_of_u.argsort()[::-1]
+            rec_item_cnt = 0
+            index_cnt = 0
+            while rec_item_cnt < K:
+                if est_pref_sort_index[index_cnt] in user_purchased_item[u]:
+                    index_cnt += 1
+                else:
+                    user_rec_list.append([u, est_pref_sort_index[index_cnt]])
+                    index_cnt += 1
+                    rec_item_cnt += 1
+
+        self.user_purchased_item = user_purchased_item
+        return pd.DataFrame(user_rec_list, columns=['UserID', 'ItemID'])
+
+    def scoring(self, ground_truth, K=5, user_to_eval=None, y=None):
+        """
+
+        :param user_to_eval: user list to evaluate performance
+        :param ground_truth: ground truth of user browsing behavior
+        :param K: top K items to recommend
+        :param y: ignore
+        :return: precision@k
+        """
+        if user_to_eval is None:
+            user_to_eval = sorted(set(ground_truth.UserID))
+
+        user_to_eval = sorted(set(user_to_eval))
+        # get top K recommendation list
+        rec_list = self.recommend(user_to_recommend=user_to_eval, K=K)
+        scoring_list = []
+        # clean ground truth
+        ground_truth = ground_truth[ground_truth.Action == 'P']
+        # begin iteration
+        for u in user_to_eval:
+            rec_list_for_user_u = set(rec_list[rec_list.UserID == u].ItemID)
+            ground_truth_for_user_u = set(ground_truth[ground_truth.UserID == u].ItemID)
+            precision_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / K
+            recall_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / len(ground_truth_for_user_u) if len(ground_truth_for_user_u) != 0 else np.nan
+            scoring_list.append([u, precision_K_for_u, recall_K_for_u])
+        scoring_list = pd.DataFrame(scoring_list, columns=['UserID', 'Precision@' + str(K), 'Recall@' + str(K)])
+        precision_K = scoring_list.mean()['Precision@' + str(K)]
+        recall_K = scoring_list.mean()['Recall@' + str(K)]
+
+        return scoring_list, precision_K, recall_K
+
+    def get_params(self, deep=True):
+        # suppose this estimator has parameters "alpha" and "recursive"
+        return {"alpha": self.alpha, "recursive": self.recursive}
+
+    def set_params(self, **parameters):
+        for parameter, value in parameters.items():
+            setattr(self, parameter, value)
+        return self
