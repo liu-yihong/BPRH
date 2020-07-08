@@ -128,21 +128,21 @@ class bprH(object):
         return S
 
     def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
-            saved_path='data/item-set-coselection.pkl'):
+            saved_path='data/item-set-coselection.pkl', coselection=False):
         # TODO: make sure train and test works with inconsistent user and item list
 
         # rename user and item
         self.user_original_id_list = sorted(set(original_user_list))
         self.item_original_id_list = sorted(set(original_item_list))
 
-        X.UserID = X.UserID.apply(lambda x: self.user_original_id_list.index(x))
-        X.ItemID = X.ItemID.apply(lambda x: self.item_original_id_list.index(x))
+        self.train_data = X.copy()
+        self.test_data = eval_X.copy()
 
-        eval_X.UserID = eval_X.UserID.apply(lambda x: self.user_original_id_list.index(x))
-        eval_X.ItemID = eval_X.ItemID.apply(lambda x: self.item_original_id_list.index(x))
+        self.train_data.UserID = self.train_data.UserID.apply(lambda x: self.user_original_id_list.index(x))
+        self.train_data.ItemID = self.train_data.ItemID.apply(lambda x: self.item_original_id_list.index(x))
 
-        self.train_data = X
-        self.test_data = eval_X
+        self.test_data.UserID = self.test_data.UserID.apply(lambda x: self.user_original_id_list.index(x))
+        self.test_data.ItemID = self.test_data.ItemID.apply(lambda x: self.item_original_id_list.index(x))
 
         self.item_list = sorted(set([iter[0] for iter in enumerate(self.item_original_id_list)]))
         self.user_list = sorted(set([iter[0] for iter in enumerate(self.user_original_id_list)]))
@@ -151,10 +151,11 @@ class bprH(object):
         self.num_i = len(self.item_list)
 
         # Calculate auxiliary-target correlation C for every user and each types of auxiliary action
-        self.alpha_u = self.auxiliary_target_correlation(X=X)
+        self.alpha_u = self.auxiliary_target_correlation(X=self.train_data)
 
         # Generate item-set based on co-selection
-        self.S = self.itemset_coselection(X=X, saved_path=saved_path)
+        if coselection:
+            self.S = self.itemset_coselection(X=self.train_data, saved_path=saved_path)
 
         # Initialization of User and Item Matrices
         if self.random_state is not None:
@@ -176,34 +177,43 @@ class bprH(object):
 
                 # Build u, I, J, K
                 # uniformly sample a user from U
-                u = sample(set(X.UserID), 1)[0]
+                u = sample(set(self.train_data.UserID), 1)[0]
 
                 # build I
                 # uniformly sample a item i from I_u_t
-                I_u_t = set(X[(X.UserID == u) & (X.Action == 'P')].ItemID)
+                I_u_t = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
                 if len(I_u_t) != 0:
                     i = sample(I_u_t, 1)[0]
                     # build I = I_u_t cap S_i
-                    I = I_u_t.intersection(self.S[i])
+                    if coselection:
+                        I = I_u_t.intersection(self.S[i])
+                    else:
+                        I = I_u_t
                 else:  # if no item in I_u_t, then set I to empty set
                     i = None
                     I = set()
 
                 # build J, since we only have one auxiliary action, we follow the uniform sampling
-                I_u_oa = set(X[(X.UserID == u) & (X.Action == 'V')].ItemID) - I_u_t  # TODO: optimize this
+                I_u_oa = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'V')].ItemID) - I_u_t  # TODO: optimize this
                 if len(I_u_oa) != 0:
                     j = sample(I_u_oa, 1)[0]
-                    J = I_u_oa.intersection(self.S[j])
+                    if coselection:
+                        J = I_u_oa.intersection(self.S[j])
+                    else:
+                        J = I_u_oa
                 else:  # if no item in I_u_oa, then set J to empty set
                     j = None
                     J = set()
 
                 # build K
-                I_u_n = set(X.ItemID) - I_u_t - I_u_oa
+                I_u_n = set(self.train_data.ItemID) - I_u_t - I_u_oa
                 if len(I_u_n) != 0:
                     k = sample(I_u_n, 1)[0]
                     # build K
-                    K = I_u_n.intersection(self.S[k])
+                    if coselection:
+                        K = I_u_n.intersection(self.S[k])
+                    else:
+                        K = I_u_n
                 else:  # if no item in I_u_n, then set K to empty set
                     k = None
                     K = set()
@@ -252,9 +262,9 @@ class bprH(object):
                 bprh_loss = f_Theta - regula
 
                 # calculate metrics on test data
-                user_to_eval = sorted(set(eval_X.UserID))
-                scoring_list_5, precision_5, recall_5 = self.scoring(user_to_eval=user_to_eval, ground_truth=eval_X, K=5)
-                scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval, ground_truth=eval_X,
+                user_to_eval = sorted(set(self.test_data.UserID))
+                scoring_list_5, precision_5, recall_5 = self.scoring(user_to_eval=user_to_eval, ground_truth=self.test_data, K=5)
+                scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval, ground_truth=self.test_data,
                                                                      K=10)
 
                 # get derivatives and update
