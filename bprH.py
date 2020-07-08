@@ -1,8 +1,9 @@
 import pickle
 import pandas as pd
 import numpy as np
-from random import sample
+from random import choice
 from tqdm import tqdm, trange
+from livelossplot import PlotLosses
 
 
 def adv_index(list_to_index, list_to_match):
@@ -128,7 +129,7 @@ class bprH(object):
         return S
 
     def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
-            saved_path='data/item-set-coselection.pkl', coselection=False):
+            saved_path='data/item-set-coselection.pkl', coselection=False, plot_metric=False):
         # TODO: make sure train and test works with inconsistent user and item list
 
         # rename user and item
@@ -144,8 +145,8 @@ class bprH(object):
         self.test_data.UserID = self.test_data.UserID.apply(lambda x: self.user_original_id_list.index(x))
         self.test_data.ItemID = self.test_data.ItemID.apply(lambda x: self.item_original_id_list.index(x))
 
-        self.item_list = sorted(set([iter[0] for iter in enumerate(self.item_original_id_list)]))
-        self.user_list = sorted(set([iter[0] for iter in enumerate(self.user_original_id_list)]))
+        self.item_list = sorted(set([idx[0] for idx in enumerate(self.item_original_id_list)]))
+        self.user_list = sorted(set([idx[0] for idx in enumerate(self.user_original_id_list)]))
 
         self.num_u = len(self.user_list)
         self.num_i = len(self.item_list)
@@ -169,21 +170,26 @@ class bprH(object):
         # estimation is U dot V
         self.estimation = np.dot(self.U, self.V)
 
+        # plot loss
+        if plot_metric:
+            groups = {'Precision@K': ['Precision@5', 'Precision@10'], 'Recall@K': ['Recall@5', 'Recall@10']}
+            plot_losses = PlotLosses(groups=groups)
+
         # Start Iteration
         with trange(self.num_iter) as t:
             for index in t:
                 # Description will be displayed on the left
-                t.set_description('ITER %i' % index)
+                # t.set_description('ITER %i' % index)
 
                 # Build u, I, J, K
                 # uniformly sample a user from U
-                u = sample(set(self.train_data.UserID), 1)[0]
+                u = choice(sorted(set(self.train_data.UserID)))
 
                 # build I
                 # uniformly sample a item i from I_u_t
                 I_u_t = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
                 if len(I_u_t) != 0:
-                    i = sample(I_u_t, 1)[0]
+                    i = choice(sorted(I_u_t))
                     # build I = I_u_t cap S_i
                     if coselection:
                         I = I_u_t.intersection(self.S[i])
@@ -194,9 +200,10 @@ class bprH(object):
                     I = set()
 
                 # build J, since we only have one auxiliary action, we follow the uniform sampling
-                I_u_oa = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'V')].ItemID) - I_u_t  # TODO: optimize this
+                I_u_oa = set(self.train_data[(self.train_data.UserID == u) & (
+                        self.train_data.Action == 'V')].ItemID) - I_u_t  # TODO: optimize this
                 if len(I_u_oa) != 0:
-                    j = sample(I_u_oa, 1)[0]
+                    j = choice(sorted(I_u_oa))
                     if coselection:
                         J = I_u_oa.intersection(self.S[j])
                     else:
@@ -206,9 +213,9 @@ class bprH(object):
                     J = set()
 
                 # build K
-                I_u_n = set(self.train_data.ItemID) - I_u_t - I_u_oa
+                I_u_n = set(self.item_list) - I_u_t - I_u_oa
                 if len(I_u_n) != 0:
-                    k = sample(I_u_n, 1)[0]
+                    k = choice(sorted(I_u_n))
                     # build K
                     if coselection:
                         K = I_u_n.intersection(self.S[k])
@@ -220,18 +227,15 @@ class bprH(object):
 
                 # calculate intermediate variables
                 # get specific alpha_u
-                try:
-                    spec_alpha_u = self.alpha_u[self.alpha_u.UserID == u].alpha.values[0]
-                except:
-                    spec_alpha_u = 1
-                u_index = u
-                U_u = self.U[u_index, :-1]
+                spec_alpha_u = self.alpha_u[self.alpha_u.UserID == u].alpha.values[0]
+
+                U_u = self.U[u, :-1]
                 # get r_hat_uIJ and r_hat_uJK
-                r_hat_uI = np.average(self.estimation[u_index, sorted(I)]) if len(
+                r_hat_uI = np.average(self.estimation[u, sorted(I)]) if len(
                     I) != 0 else 0
-                r_hat_uJ = np.average(self.estimation[u_index, sorted(J)]) if len(
+                r_hat_uJ = np.average(self.estimation[u, sorted(J)]) if len(
                     J) != 0 else 0
-                r_hat_uK = np.average(self.estimation[u_index, sorted(K)]) if len(
+                r_hat_uK = np.average(self.estimation[u, sorted(K)]) if len(
                     K) != 0 else 0
 
                 r_hat_uIJ = r_hat_uI - r_hat_uJ
@@ -251,30 +255,16 @@ class bprH(object):
                 b_J = np.average(self.V[-1, sorted(J)]) if len(J) != 0 else 0
                 b_K = np.average(self.V[-1, sorted(K)]) if len(K) != 0 else 0
 
-                # calculate loss
-                f_Theta = np.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + np.log(sigmoid(r_hat_uJK))
-                regula = self.lambda_u * np.linalg.norm(U_u, ord=2) + self.lambda_v * (
-                    (np.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
-                        np.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
-                        np.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
-                                 (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
-                             b_K if len(K) != 0 else 0) ** 2)
-                bprh_loss = f_Theta - regula
-
-                # calculate metrics on test data
-                user_to_eval = sorted(set(self.test_data.UserID))
-                scoring_list_5, precision_5, recall_5 = self.scoring(user_to_eval=user_to_eval, ground_truth=self.test_data, K=5)
-                scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval, ground_truth=self.test_data,
-                                                                     K=10)
 
                 # get derivatives and update
 
                 # NABULA U_u
-                df_dUu = sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u * (V_bar_I - V_bar_J) + sigmoid(
-                    - r_hat_uJK) * (V_bar_J - V_bar_K)
+                df_dUu = sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u * (V_bar_I - V_bar_J) + \
+                         sigmoid(- r_hat_uJK) * (V_bar_J - V_bar_K)
                 dR_dUu = 2 * self.lambda_u * U_u
                 # update U_u = U_u + gamma * (df_dUu - dR_dUu)
-                self.U[u_index, :-1] += self.gamma * (df_dUu - dR_dUu)
+                norm_nabula_U_u = np.linalg.norm((df_dUu - dR_dUu), ord=2)
+                self.U[u, :-1] += self.gamma * (df_dUu - dR_dUu)
 
                 if len(I) != 0:
                     # NABULA V_i
@@ -282,10 +272,15 @@ class bprH(object):
                     dR_dbi = 2 * self.lambda_b * b_I / len(I)
                     df_dVi = df_dbi * U_u
                     dR_dVi = 2 * self.lambda_v * V_bar_I / len(I)
+
+                    norm_nabula_Vi = np.linalg.norm((df_dVi - dR_dVi), ord=2)
+
                     # update V_i = V_i + gamma * (df_dVi - dR_dVi)
                     self.V[:-1, sorted(I)] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
                     # update b_i = b_i + gamma * (df_dbi - dR_dbi)
                     self.V[-1, sorted(I)] += self.gamma * (df_dbi - dR_dbi)
+                else:
+                    norm_nabula_Vi = 0
 
                 if len(J) != 0:
                     # NABULA V_j
@@ -293,10 +288,15 @@ class bprH(object):
                     dR_dbj = 2 * self.lambda_b * b_J / len(J)
                     df_dVj = df_dbj * U_u
                     dR_dVj = 2 * self.lambda_v * V_bar_J / len(J)
+
+                    norm_nabula_Vj = np.linalg.norm((df_dVj - dR_dVj), ord=2)
+
                     # update V_j = V_j + gamma * (df_dVj - dR_dVj)
                     self.V[:-1, sorted(J)] += self.gamma * (df_dVj - dR_dVj)[:, None]  # trick: transpose here
                     # update b_j = b_j + gamma * (df_dbj - dR_dbj)
                     self.V[-1, sorted(J)] += self.gamma * (df_dbj - dR_dbj)
+                else:
+                    norm_nabula_Vj = 0
 
                 if len(K) != 0:
                     # NABULA V_k
@@ -304,16 +304,49 @@ class bprH(object):
                     dR_dbk = 2 * self.lambda_b * b_K / len(K)
                     df_dVk = df_dbk * U_u
                     dR_dVk = 2 * self.lambda_v * V_bar_K / len(K)
+
+                    norm_nabula_Vk = np.linalg.norm((df_dVk - dR_dVk), ord=2)
+
                     # update V_k = V_k + gamma * (df_dVk - dR_dVk)
                     self.V[:-1, sorted(K)] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
                     # update b_k = b_k + gamma * (df_dbk - dR_dbk)
                     self.V[-1, sorted(K)] += self.gamma * (df_dbk - dR_dbk)
+                else:
+                    norm_nabula_Vk = 0
+
+                    # calculate loss
+                    f_Theta = np.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + np.log(sigmoid(r_hat_uJK))
+                    regula = self.lambda_u * np.linalg.norm(U_u, ord=2) + self.lambda_v * (
+                        (np.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
+                            np.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
+                            np.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
+                                     (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
+                                 b_K if len(K) != 0 else 0) ** 2)
+                    bprh_loss = f_Theta - regula
+
+                    # calculate metrics on test data
+                    user_to_eval = sorted(set(self.test_data.UserID))
+                    scoring_list_5, precision_5, recall_5 = self.scoring(user_to_eval=user_to_eval,
+                                                                         ground_truth=self.test_data, K=5)
+                    scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval,
+                                                                            ground_truth=self.test_data,
+                                                                            K=10)
 
                 # update estimation
                 self.estimation = np.dot(self.U, self.V)
                 # Postfix will be displayed on the right,
                 # formatted automatically based on argument's datatype
-                t.set_postfix(loss=bprh_loss, precision_5=precision_5, recall_5=recall_5, precision_10=precision_10, recall_10=recall_10)
+                t.set_postfix(loss=bprh_loss, precision_5=precision_5, recall_5=recall_5, precision_10=precision_10,
+                              recall_10=recall_10, norm_nabula_U_u=norm_nabula_U_u, norm_nabula_Vi=norm_nabula_Vi,
+                              norm_nabula_Vj=norm_nabula_Vj, norm_nabula_Vk=norm_nabula_Vk)
+                if plot_metric:
+                    plot_losses.update({
+                        'Precision@5': precision_5,
+                        'Precision@10': precision_10,
+                        'Recall@5': recall_5,
+                        'Recall@10': recall_10
+                    })
+                    plot_losses.send()
 
     def predict_estimation(self, user_to_predict, item_to_predict=None):
         if item_to_predict is None:
@@ -339,7 +372,8 @@ class bprH(object):
         # print("Build User's Purchased Item Dict & Rec List")
         # user_set_bar = tqdm(user_to_recommend)
         for u in user_to_recommend:
-            user_purchased_item[u] = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
+            user_purchased_item[u] = set(
+                self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
             est_pref_of_u = estimated_pref[u, :]
             #
             est_pref_sort_index = est_pref_of_u.argsort()[::-1]
@@ -379,7 +413,8 @@ class bprH(object):
             rec_list_for_user_u = set(rec_list[rec_list.UserID == u].ItemID)
             ground_truth_for_user_u = set(ground_truth[ground_truth.UserID == u].ItemID)
             precision_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / K
-            recall_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / len(ground_truth_for_user_u) if len(ground_truth_for_user_u) != 0 else np.nan
+            recall_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / len(
+                ground_truth_for_user_u) if len(ground_truth_for_user_u) != 0 else np.nan
             scoring_list.append([u, precision_K_for_u, recall_K_for_u])
         scoring_list = pd.DataFrame(scoring_list, columns=['UserID', 'Precision@' + str(K), 'Recall@' + str(K)])
         precision_K = scoring_list.mean()['Precision@' + str(K)]
