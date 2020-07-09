@@ -30,7 +30,7 @@ class bprH(object):
 
     def __init__(self, dim, omega, rho, lambda_u, lambda_v, lambda_b, gamma, num_iter=200, random_state=None):
         """
-
+        Initializing class instance bprH
         :param dim: the dimension of latent vector
         :param omega: parameter controlling alpha_u
         :param rho: parameter controlling alpha_u
@@ -73,8 +73,8 @@ class bprH(object):
         """
         Calculate auxiliary-target correlation C for every user and each types of auxiliary action
         Here we only have one auxiliary action 'V' for 'View'
-        :param X: input data
-        :param y:
+        :param X: train data as input
+        :param y: ignore
         :return: return alpha_u
         """
         print("Calculate auxiliary-target correlation")
@@ -88,10 +88,13 @@ class bprH(object):
             # TODO: filtered item set
             for x in auxiliary_action:
                 I_a_u = set(X[(X.UserID == u) & (X.Action == x)].ItemID)
-
+                # Equation Reference to page 86 section 3.3
+                # if I_t_u is 0, then we set C_u_at to be 0
+                # if I_a_u is 0, then we set C_u_ta to be 0
                 C_u_at = len(I_t_u.intersection(I_a_u)) / len(I_t_u) if len(I_t_u) != 0 else 0
                 C_u_ta = len(I_t_u.intersection(I_a_u)) / len(I_a_u) if len(I_a_u) != 0 else 0
-
+                # if C_u_ta + C_u_at == 0, then we set alpha_u of user u to be 1
+                # hence, C_u_X here is 1 / omega because alpha_u = omega * C_u_X
                 C_u_X = 2 * C_u_at * C_u_ta / (C_u_ta + C_u_at) if C_u_ta + C_u_at != 0 else (1 / self.omega)
                 # set final alpha_u to 1 if C_u_ta + C_u_at == 0
                 C_u[u][x] = C_u_X
@@ -108,20 +111,24 @@ class bprH(object):
     def itemset_coselection(self, saved_path, X, y=None):
         """
 
-        :param X:
-        :param y:
-        :param saved_path:
-        :return:
+        :param X: trained data
+        :param y: ignore
+        :param saved_path: saved path of coselection dictionary index by user
+        :return: coselection dictionary
         """
         print("Generate Itemset Coselection")
         S = dict()
+        U = dict()
+        # first we build U_i for each item i
+        for i in self.item_list:
+            U[i] = set(X[(X.ItemID == i) & (X.Action == 'P')].UserID)
+        # then we build coselection dictionary
         item_set_bar = tqdm(self.item_list)
         for i in item_set_bar:
             S[i] = set()
-            U_i = set(X[X.ItemID == i].UserID)
             for j in self.item_list:
-                U_j = set(X[X.ItemID == j].UserID)
-                if len(U_i.intersection(U_j)) >= 2: S[i].add(j)
+                # If more than 2 users have target action on i and j, then j is included in S[i]
+                if len(U[i].intersection(U[j])) >= 2: S[i].add(j)
         # save coselection list
         with open(saved_path, 'wb') as f:
             pickle.dump(S, f, pickle.HIGHEST_PROTOCOL)
@@ -194,6 +201,8 @@ class bprH(object):
                     if coselection:
                         I = I_u_t.intersection(self.S[i])
                     else:
+                        # if no coselection, we set I as the set of purchased items by user u
+                        # no uniform sampling, like COFISET
                         I = I_u_t
                 else:  # if no item in I_u_t, then set I to empty set
                     i = None
@@ -207,6 +216,8 @@ class bprH(object):
                     if coselection:
                         J = I_u_oa.intersection(self.S[j])
                     else:
+                        # if no coselection, we set J as the set of only-auxiliary items by user u
+                        # no uniform sampling, like COFISET
                         J = I_u_oa
                 else:  # if no item in I_u_oa, then set J to empty set
                     j = None
@@ -220,6 +231,8 @@ class bprH(object):
                     if coselection:
                         K = I_u_n.intersection(self.S[k])
                     else:
+                        # if no coselection, we set K as the set of no-action items by user u
+                        # no uniform sampling, like COFISET
                         K = I_u_n
                 else:  # if no item in I_u_n, then set K to empty set
                     k = None
@@ -331,12 +344,13 @@ class bprH(object):
                     scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval,
                                                                             ground_truth=self.test_data,
                                                                             K=10)
+                    print("TEST: ", bprh_loss, precision_5)
 
                 # update estimation
                 self.estimation = np.dot(self.U, self.V)
                 # Postfix will be displayed on the right,
                 # formatted automatically based on argument's datatype
-                t.set_postfix(loss=bprh_loss, precision_5=precision_5, recall_5=recall_5, precision_10=precision_10,
+                t.set_postfix(precision_5=precision_5, recall_5=recall_5, precision_10=precision_10,
                               recall_10=recall_10, norm_nabula_U_u=norm_nabula_U_u, norm_nabula_Vi=norm_nabula_Vi,
                               norm_nabula_Vj=norm_nabula_Vj, norm_nabula_Vk=norm_nabula_Vk)
                 if plot_metric:
