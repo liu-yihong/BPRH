@@ -327,30 +327,28 @@ class bprH(object):
                 else:
                     norm_nabula_Vk = 0
 
-                    # calculate loss
-                    f_Theta = np.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + np.log(sigmoid(r_hat_uJK))
-                    regula = self.lambda_u * np.linalg.norm(U_u, ord=2) + self.lambda_v * (
+                # calculate loss
+                f_Theta = np.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + np.log(sigmoid(r_hat_uJK))
+                regula = self.lambda_u * np.linalg.norm(U_u, ord=2) + self.lambda_v * (
                         (np.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
                             np.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
                             np.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
                                      (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
                                  b_K if len(K) != 0 else 0) ** 2)
-                    bprh_loss = f_Theta - regula
+                bprh_loss = f_Theta - regula
 
-                    # calculate metrics on test data
-                    user_to_eval = sorted(set(self.test_data.UserID))
-                    scoring_list_5, precision_5, recall_5 = self.scoring(user_to_eval=user_to_eval,
+                # calculate metrics on test data
+                user_to_eval = sorted(set(self.test_data.UserID))
+                scoring_list_5, precision_5, recall_5 = self.scoring(user_to_eval=user_to_eval,
                                                                          ground_truth=self.test_data, K=5)
-                    scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval,
+                scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval,
                                                                             ground_truth=self.test_data,
                                                                             K=10)
-                    print("TEST: ", bprh_loss, precision_5)
-
                 # update estimation
                 self.estimation = np.dot(self.U, self.V)
                 # Postfix will be displayed on the right,
                 # formatted automatically based on argument's datatype
-                t.set_postfix(precision_5=precision_5, recall_5=recall_5, precision_10=precision_10,
+                t.set_postfix(loss=bprh_loss, precision_5=precision_5, recall_5=recall_5, precision_10=precision_10,
                               recall_10=recall_10, norm_nabula_U_u=norm_nabula_U_u, norm_nabula_Vi=norm_nabula_Vi,
                               norm_nabula_Vj=norm_nabula_Vj, norm_nabula_Vk=norm_nabula_Vk)
                 if plot_metric:
