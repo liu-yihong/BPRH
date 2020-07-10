@@ -74,6 +74,11 @@ class bprH(object):
         self.I_u_t = dict()
         self.I_u_a = dict()
 
+        self.I_test_u = None
+        self.I_test_u_not = None
+
+        self.eval_hist = []
+
     def auxiliary_target_correlation(self, X, y=None):
         """
         Calculate auxiliary-target correlation C for every user and each types of auxiliary action
@@ -194,7 +199,8 @@ class bprH(object):
 
         # plot loss
         if plot_metric:
-            groups = {'Precision@K': ['Precision@5', 'Precision@10'], 'Recall@K': ['Recall@5', 'Recall@10']}
+            groups = {'Precision@K': ['Precision@5', 'Precision@10'],
+                      'Recall@K': ['Recall@5', 'Recall@10']}
             plot_losses = PlotLosses(groups=groups)
 
         # build I_u_t, I_u_a
@@ -356,16 +362,17 @@ class bprH(object):
 
                 # calculate metrics on test data
                 user_to_eval = sorted(set(self.test_data.UserID))
-                scoring_list_5, precision_5, recall_5 = self.scoring(user_to_eval=user_to_eval,
-                                                                     ground_truth=self.test_data, K=5)
-                scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval,
-                                                                        ground_truth=self.test_data,
-                                                                        K=10)
+                scoring_list_5, precision_5, recall_5, avg_auc = self.scoring(user_to_eval=user_to_eval,
+                                                                              ground_truth=self.test_data, K=5)
+                scoring_list_10, precision_10, recall_10, _ = self.scoring(user_to_eval=user_to_eval,
+                                                                           ground_truth=self.test_data,
+                                                                           K=10)
                 # update estimation
                 self.estimation = cupy.dot(self.U, self.V)
                 # Postfix will be displayed on the right,
                 # formatted automatically based on argument's datatype
-                t.set_postfix(loss=bprh_loss, precision_5=precision_5, recall_5=recall_5, precision_10=precision_10,
+                t.set_postfix(loss=bprh_loss, auc=avg_auc, precision_5=precision_5, recall_5=recall_5,
+                              precision_10=precision_10,
                               recall_10=recall_10, norm_nabula_U_u=norm_nabula_U_u, norm_nabula_Vi=norm_nabula_Vi,
                               norm_nabula_Vj=norm_nabula_Vj, norm_nabula_Vk=norm_nabula_Vk)
                 if plot_metric:
@@ -376,6 +383,8 @@ class bprH(object):
                         'Recall@10': recall_10
                     })
                     plot_losses.send()
+                # log history
+                self.eval_hist.append([index, precision_5, precision_10, recall_5, recall_10])
 
     def predict_estimation(self, user_to_predict, item_to_predict=None):
         if item_to_predict is None:
@@ -391,8 +400,6 @@ class bprH(object):
         if user_to_recommend is None:
             user_to_recommend = self.user_list
 
-        estimated_pref = self.predict_estimation(user_to_predict=self.user_original_id_list)
-
         # build the rec list for users
         user_rec_dict = dict()
 
@@ -400,7 +407,7 @@ class bprH(object):
         # user_set_bar = tqdm(user_to_recommend)
         for u in user_to_recommend:
             user_rec_dict[u] = set()
-            est_pref_of_u = estimated_pref[u, :]
+            est_pref_of_u = self.estimation[u, :]
             #
             est_pref_sort_index = est_pref_of_u.argsort()[::-1].get()
             rec_item_cnt = 0
@@ -441,14 +448,32 @@ class bprH(object):
         scoring_list = []
         # clean ground truth
         ground_truth = ground_truth[ground_truth.Action == 'P']
+        # build two sets with users for AUC
+        if (self.I_test_u is None) | (self.I_test_u_not is None):
+            self.I_test_u = dict()
+            self.I_test_u_not = dict()
+            for u in user_to_eval:
+                self.I_test_u[u] = set(ground_truth[ground_truth.UserID == u].ItemID)
+                self.I_test_u_not[u] = set(self.item_list) - self.I_test_u[u]
+
         # begin iteration
         for u in user_to_eval:
             rec_list_for_user_u = user_rec_dict[u]
-            ground_truth_for_user_u = set(ground_truth[ground_truth.UserID == u].ItemID)
-            precision_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / K
-            recall_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / len(
-                ground_truth_for_user_u) if len(ground_truth_for_user_u) != 0 else np.nan
-            scoring_list.append([u, precision_K_for_u, recall_K_for_u])
+            # get precision and recall
+            precision_K_for_u = len(rec_list_for_user_u.intersection(self.I_test_u[u])) / K
+            recall_K_for_u = len(rec_list_for_user_u.intersection(self.I_test_u[u])) / len(
+                self.I_test_u[u]) if len(self.I_test_u[u]) != 0 else np.nan
+            # get auc
+            # est_pref_of_u = self.estimation[u, :].get()
+            E_u = 0
+            indicator_cnt = 0
+            # for i in self.I_test_u:
+            #    for j in self.I_test_u_not:
+            #        E_u += 1
+            #        if est_pref_of_u[i] > est_pref_of_u[j]:
+            #            indicator_cnt += 1
+            auc_for_u = indicator_cnt / E_u if E_u != 0 else 0
+            scoring_list.append([u, precision_K_for_u, recall_K_for_u, auc_for_u])
         # scoring_list = pd.DataFrame(scoring_list, columns=['UserID', 'Precision@' + str(K), 'Recall@' + str(K)])
         # precision_K = scoring_list.mean()['Precision@' + str(K)]
         # recall_K = scoring_list.mean()['Recall@' + str(K)]
@@ -456,7 +481,8 @@ class bprH(object):
         scoring_average = scoring_list.mean(axis=0)
         precision_K = scoring_average[1]
         recall_K = scoring_average[2]
-        return scoring_list, precision_K, recall_K
+        avg_auc = scoring_average[3]
+        return scoring_list, precision_K, recall_K, avg_auc
 
     def get_params(self, deep=True):
         # suppose this estimator has parameters "alpha" and "recursive"
