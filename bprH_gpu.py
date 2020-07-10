@@ -29,7 +29,8 @@ def save_model(model_instance, saved_path):
 
 class bprH(object):
 
-    def __init__(self, dim=10, omega=1, rho=1, lambda_u=0.5, lambda_v=0.1, lambda_b=0.1, gamma=0.001, num_iter=200, random_state=None):
+    def __init__(self, dim=10, omega=1, rho=1, lambda_u=0.5, lambda_v=0.1, lambda_b=0.1, gamma=0.001, num_iter=200,
+                 random_state=None):
         """
         Initializing class instance bprH
         :param dim: the dimension of latent vector
@@ -102,15 +103,16 @@ class bprH(object):
                 C_u_X = 2 * C_u_at * C_u_ta / (C_u_ta + C_u_at) if C_u_ta + C_u_at != 0 else (1 / self.omega)
                 # set final alpha_u to 1 if C_u_ta + C_u_at == 0
                 alpha_u[u][x] = C_u_X
+                # We have only one auxiliary action 'V'
                 alpha_u[u]['alpha'] = self.omega * self.rho * C_u_X
 
-        #temp = pd.DataFrame.from_dict(C_u, orient='index')
+        # temp = pd.DataFrame.from_dict(C_u, orient='index')
         # We have only one auxiliary action 'V'
-        #temp['alpha'] = self.omega * self.rho * temp.V
-        #alpha_u = temp
-        #del temp
-        #alpha_u.reset_index(inplace=True)
-        #alpha_u.columns = ['UserID', 'V', 'alpha']
+        # temp['alpha'] = self.omega * self.rho * temp.V
+        # alpha_u = temp
+        # del temp
+        # alpha_u.reset_index(inplace=True)
+        # alpha_u.columns = ['UserID', 'V', 'alpha']
         return alpha_u
 
     def itemset_coselection(self, saved_path, X, y=None):
@@ -147,7 +149,6 @@ class bprH(object):
             self.I_u_t[u] = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
             self.I_u_a[u] = set(self.train_data[(self.train_data.UserID == u) & (
                     self.train_data.Action == 'V')].ItemID)
-
 
     def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
             saved_path='data/item-set-coselection.pkl', coselection=False, plot_metric=False):
@@ -285,7 +286,6 @@ class bprH(object):
                 b_J = cupy.average(self.V[-1, sorted(J)]) if len(J) != 0 else cupy.array([0])
                 b_K = cupy.average(self.V[-1, sorted(K)]) if len(K) != 0 else cupy.array([0])
 
-
                 # get derivatives and update
 
                 # NABULA U_u
@@ -347,20 +347,20 @@ class bprH(object):
                 # calculate loss
                 f_Theta = cupy.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + cupy.log(sigmoid(r_hat_uJK))
                 regula = self.lambda_u * cupy.linalg.norm(U_u, ord=2) + self.lambda_v * (
-                        (cupy.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
-                            cupy.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
-                            cupy.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
-                                     (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
-                                 b_K if len(K) != 0 else 0) ** 2)
+                    (cupy.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
+                        cupy.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
+                        cupy.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
+                                 (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
+                             b_K if len(K) != 0 else 0) ** 2)
                 bprh_loss = f_Theta - regula
 
                 # calculate metrics on test data
                 user_to_eval = sorted(set(self.test_data.UserID))
                 scoring_list_5, precision_5, recall_5 = self.scoring(user_to_eval=user_to_eval,
-                                                                         ground_truth=self.test_data, K=5)
+                                                                     ground_truth=self.test_data, K=5)
                 scoring_list_10, precision_10, recall_10 = self.scoring(user_to_eval=user_to_eval,
-                                                                            ground_truth=self.test_data,
-                                                                            K=10)
+                                                                        ground_truth=self.test_data,
+                                                                        K=10)
                 # update estimation
                 self.estimation = cupy.dot(self.U, self.V)
                 # Postfix will be displayed on the right,
@@ -382,7 +382,7 @@ class bprH(object):
             return cupy.dot(self.U[adv_index(self.user_original_id_list, user_to_predict), :], self.V)
         else:
             return cupy.dot(self.U[adv_index(self.user_original_id_list, user_to_predict), :],
-                          self.V[:, adv_index(self.item_original_id_list, item_to_predict)])
+                            self.V[:, adv_index(self.item_original_id_list, item_to_predict)])
 
     def recommend(self, user_to_recommend=None, K=5):
         if self.train_data is None:
@@ -405,15 +405,15 @@ class bprH(object):
             est_pref_sort_index = est_pref_of_u.argsort()[::-1].get()
             rec_item_cnt = 0
             for item_id in est_pref_sort_index:
-                if rec_item_cnt == K-1:
+                if rec_item_cnt == K:
                     break
                 if item_id not in self.I_u_t[u]:
                     user_rec_dict[u].add(item_id)
                     rec_item_cnt += 1
 
-            #rec_item_cnt = 0
-            #index_cnt = 0
-            #while rec_item_cnt < K:
+            # rec_item_cnt = 0
+            # index_cnt = 0
+            # while rec_item_cnt < K:
             #    if est_pref_sort_index[index_cnt] in self.I_u_t[u]:
             #        index_cnt += 1
             #    else:
@@ -449,9 +449,9 @@ class bprH(object):
             recall_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / len(
                 ground_truth_for_user_u) if len(ground_truth_for_user_u) != 0 else np.nan
             scoring_list.append([u, precision_K_for_u, recall_K_for_u])
-        #scoring_list = pd.DataFrame(scoring_list, columns=['UserID', 'Precision@' + str(K), 'Recall@' + str(K)])
-        #precision_K = scoring_list.mean()['Precision@' + str(K)]
-        #recall_K = scoring_list.mean()['Recall@' + str(K)]
+        # scoring_list = pd.DataFrame(scoring_list, columns=['UserID', 'Precision@' + str(K), 'Recall@' + str(K)])
+        # precision_K = scoring_list.mean()['Precision@' + str(K)]
+        # recall_K = scoring_list.mean()['Recall@' + str(K)]
         scoring_list = np.array(scoring_list)
         scoring_average = scoring_list.mean(axis=0)
         precision_K = scoring_average[1]

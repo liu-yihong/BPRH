@@ -69,6 +69,9 @@ class bprH(object):
         self.train_data = None
         self.test_data = None
 
+        self.I_u_t = dict()
+        self.I_u_a = dict()
+
     def auxiliary_target_correlation(self, X, y=None):
         """
         Calculate auxiliary-target correlation C for every user and each types of auxiliary action
@@ -80,10 +83,10 @@ class bprH(object):
         print("Calculate auxiliary-target correlation")
         target_action = 'P'
         auxiliary_action = ['V']
-        C_u = dict()
+        alpha_u = dict()
         user_set_bar = tqdm(self.user_list)
         for u in user_set_bar:
-            C_u[u] = dict()
+            alpha_u[u] = dict()
             I_t_u = set(X[(X.UserID == u) & (X.Action == target_action)].ItemID)
             # TODO: filtered item set
             for x in auxiliary_action:
@@ -97,15 +100,17 @@ class bprH(object):
                 # hence, C_u_X here is 1 / omega because alpha_u = omega * C_u_X
                 C_u_X = 2 * C_u_at * C_u_ta / (C_u_ta + C_u_at) if C_u_ta + C_u_at != 0 else (1 / self.omega)
                 # set final alpha_u to 1 if C_u_ta + C_u_at == 0
-                C_u[u][x] = C_u_X
+                alpha_u[u][x] = C_u_X
+                # We have only one auxiliary action 'V'
+                alpha_u[u]['alpha'] = self.omega * self.rho * C_u_X
 
-        temp = pd.DataFrame.from_dict(C_u, orient='index')
+        #temp = pd.DataFrame.from_dict(C_u, orient='index')
         # We have only one auxiliary action 'V'
-        temp['alpha'] = self.omega * self.rho * temp.V
-        alpha_u = temp
-        del temp
-        alpha_u.reset_index(inplace=True)
-        alpha_u.columns = ['UserID', 'V', 'alpha']
+        #temp['alpha'] = self.omega * self.rho * temp.V
+        #alpha_u = temp
+        #del temp
+        #alpha_u.reset_index(inplace=True)
+        #alpha_u.columns = ['UserID', 'V', 'alpha']
         return alpha_u
 
     def itemset_coselection(self, saved_path, X, y=None):
@@ -134,6 +139,14 @@ class bprH(object):
             pickle.dump(S, f, pickle.HIGHEST_PROTOCOL)
 
         return S
+
+    def build_itemset_for_user(self):
+        print("Build I_u_t, I_u_a")
+        user_set_bar = tqdm(self.user_list)
+        for u in user_set_bar:
+            self.I_u_t[u] = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
+            self.I_u_a[u] = set(self.train_data[(self.train_data.UserID == u) & (
+                    self.train_data.Action == 'V')].ItemID)
 
     def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
             saved_path='data/item-set-coselection.pkl', coselection=False, plot_metric=False):
@@ -182,7 +195,11 @@ class bprH(object):
             groups = {'Precision@K': ['Precision@5', 'Precision@10'], 'Recall@K': ['Recall@5', 'Recall@10']}
             plot_losses = PlotLosses(groups=groups)
 
+        # build I_u_t, I_u_a
+        self.build_itemset_for_user()
+
         # Start Iteration
+        all_item = set(self.item_list)
         with trange(self.num_iter) as t:
             for index in t:
                 # Description will be displayed on the left
@@ -194,7 +211,7 @@ class bprH(object):
 
                 # build I
                 # uniformly sample a item i from I_u_t
-                I_u_t = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
+                I_u_t = self.I_u_t[u]
                 if len(I_u_t) != 0:
                     i = choice(sorted(I_u_t))
                     # build I = I_u_t cap S_i
@@ -209,8 +226,7 @@ class bprH(object):
                     I = set()
 
                 # build J, since we only have one auxiliary action, we follow the uniform sampling
-                I_u_oa = set(self.train_data[(self.train_data.UserID == u) & (
-                        self.train_data.Action == 'V')].ItemID) - I_u_t  # TODO: optimize this
+                I_u_oa = self.I_u_a[u] - I_u_t
                 if len(I_u_oa) != 0:
                     j = choice(sorted(I_u_oa))
                     if coselection:
@@ -224,7 +240,7 @@ class bprH(object):
                     J = set()
 
                 # build K
-                I_u_n = set(self.item_list) - I_u_t - I_u_oa
+                I_u_n = all_item - I_u_t - I_u_oa
                 if len(I_u_n) != 0:
                     k = choice(sorted(I_u_n))
                     # build K
@@ -240,7 +256,7 @@ class bprH(object):
 
                 # calculate intermediate variables
                 # get specific alpha_u
-                spec_alpha_u = self.alpha_u[self.alpha_u.UserID == u].alpha.values[0]
+                spec_alpha_u = self.alpha_u[u]['alpha']
 
                 U_u = self.U[u, :-1]
                 # get r_hat_uIJ and r_hat_uJK
@@ -376,31 +392,35 @@ class bprH(object):
 
         estimated_pref = self.predict_estimation(user_to_predict=self.user_original_id_list)
 
-        # build the dict that user's purchased item
-        user_purchased_item = dict()
         # build the rec list for users
-        user_rec_list = []
+        user_rec_dict = dict()
 
         # print("Build User's Purchased Item Dict & Rec List")
         # user_set_bar = tqdm(user_to_recommend)
         for u in user_to_recommend:
-            user_purchased_item[u] = set(
-                self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
+            user_rec_dict[u] = set()
             est_pref_of_u = estimated_pref[u, :]
             #
             est_pref_sort_index = est_pref_of_u.argsort()[::-1]
             rec_item_cnt = 0
-            index_cnt = 0
-            while rec_item_cnt < K:
-                if est_pref_sort_index[index_cnt] in user_purchased_item[u]:
-                    index_cnt += 1
-                else:
-                    user_rec_list.append([u, est_pref_sort_index[index_cnt]])
-                    index_cnt += 1
+            for item_id in est_pref_sort_index:
+                if rec_item_cnt == K:
+                    break
+                if item_id not in self.I_u_t[u]:
+                    user_rec_dict[u].add(item_id)
                     rec_item_cnt += 1
 
-        self.user_purchased_item = user_purchased_item
-        return pd.DataFrame(user_rec_list, columns=['UserID', 'ItemID'])
+            #rec_item_cnt = 0
+            #index_cnt = 0
+            #while rec_item_cnt < K:
+            #    if est_pref_sort_index[index_cnt] in self.I_u_t[u]:
+            #        index_cnt += 1
+            #    else:
+            #        user_rec_list.append([u, est_pref_sort_index[index_cnt]])
+            #        index_cnt += 1
+            #        rec_item_cnt += 1
+
+        return user_rec_dict
 
     def scoring(self, ground_truth, K=5, user_to_eval=None, y=None):
         """
@@ -416,22 +436,25 @@ class bprH(object):
 
         user_to_eval = sorted(set(user_to_eval))
         # get top K recommendation list
-        rec_list = self.recommend(user_to_recommend=user_to_eval, K=K)
+        user_rec_dict = self.recommend(user_to_recommend=user_to_eval, K=K)
         scoring_list = []
         # clean ground truth
         ground_truth = ground_truth[ground_truth.Action == 'P']
         # begin iteration
         for u in user_to_eval:
-            rec_list_for_user_u = set(rec_list[rec_list.UserID == u].ItemID)
+            rec_list_for_user_u = user_rec_dict[u]
             ground_truth_for_user_u = set(ground_truth[ground_truth.UserID == u].ItemID)
             precision_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / K
             recall_K_for_u = len(rec_list_for_user_u.intersection(ground_truth_for_user_u)) / len(
                 ground_truth_for_user_u) if len(ground_truth_for_user_u) != 0 else np.nan
             scoring_list.append([u, precision_K_for_u, recall_K_for_u])
-        scoring_list = pd.DataFrame(scoring_list, columns=['UserID', 'Precision@' + str(K), 'Recall@' + str(K)])
-        precision_K = scoring_list.mean()['Precision@' + str(K)]
-        recall_K = scoring_list.mean()['Recall@' + str(K)]
-
+        #scoring_list = pd.DataFrame(scoring_list, columns=['UserID', 'Precision@' + str(K), 'Recall@' + str(K)])
+        #precision_K = scoring_list.mean()['Precision@' + str(K)]
+        #recall_K = scoring_list.mean()['Recall@' + str(K)]
+        scoring_list = np.array(scoring_list)
+        scoring_average = scoring_list.mean(axis=0)
+        precision_K = scoring_average[1]
+        recall_K = scoring_average[2]
         return scoring_list, precision_K, recall_K
 
     def get_params(self, deep=True):
