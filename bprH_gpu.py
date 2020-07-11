@@ -94,10 +94,10 @@ class bprH(object):
         user_set_bar = tqdm(self.user_list)
         for u in user_set_bar:
             alpha_u[u] = dict()
-            I_t_u = set(X[(X.UserID == u) & (X.Action == target_action)].ItemID)
-            # TODO: filtered item set
+            I_t_u = self.I_u_t[u]
+            # Notice we only have View action so we do not need filtered item set
             for x in auxiliary_action:
-                I_a_u = set(X[(X.UserID == u) & (X.Action == x)].ItemID)
+                I_a_u = self.I_u_a[u]
                 # Equation Reference to page 86 section 3.3
                 # if I_t_u is 0, then we set C_u_at to be 0
                 # if I_a_u is 0, then we set C_u_ta to be 0
@@ -126,21 +126,26 @@ class bprH(object):
         :param X: trained data
         :param y: ignore
         :param saved_path: saved path of coselection dictionary index by user
-        :return: coselection dictionary
+        :return: co-selection dictionary
         """
-        print("Generate Itemset Coselection")
+
         S = dict()
         U = dict()
         # first we build U_i for each item i
-        for i in self.item_list:
+        print("Generate Itemset Coselection - Build U_i")
+        item_set_bar = tqdm(self.item_list)
+        for i in item_set_bar:
             U[i] = set(X[(X.ItemID == i) & (X.Action == 'P')].UserID)
+        del item_set_bar
         # then we build coselection dictionary
+        print("Generate Itemset Coselection - Build S")
         item_set_bar = tqdm(self.item_list)
         for i in item_set_bar:
             S[i] = set()
             for j in self.item_list:
                 # If more than 2 users have target action on i and j, then j is included in S[i]
-                if len(U[i].intersection(U[j])) >= 2: S[i].add(j)
+                if len(U[i].intersection(U[j])) >= 2:
+                    S[i].add(j)
         # save coselection list
         with open(saved_path, 'wb') as f:
             pickle.dump(S, f, pickle.HIGHEST_PROTOCOL)
@@ -156,10 +161,10 @@ class bprH(object):
                     self.train_data.Action == 'V')].ItemID)
 
     def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
-            saved_path='data/item-set-coselection.pkl', coselection=False, plot_metric=False):
-        # TODO: make sure train and test works with inconsistent user and item list
-
-        # rename user and item
+            saved_path='data/item-set-coselection.pkl', coselection=False, plot_metric=False, print_metric=False):
+        # To make sure train and test works with inconsistent user and item list,
+        # we transform user and item's string ID to int ID so that their ID is their index in U and V
+        print("Registering Model Parameters")
         self.user_original_id_list = sorted(set(original_user_list))
         self.item_original_id_list = sorted(set(original_item_list))
 
@@ -178,6 +183,9 @@ class bprH(object):
         self.num_u = len(self.user_list)
         self.num_i = len(self.item_list)
 
+        # build I_u_t, I_u_a (pre-computing for acceleration)
+        self.build_itemset_for_user()
+
         # Calculate auxiliary-target correlation C for every user and each types of auxiliary action
         self.alpha_u = self.auxiliary_target_correlation(X=self.train_data)
 
@@ -191,20 +199,18 @@ class bprH(object):
         else:
             cupy.random.seed(0)
 
+        print("Initializing User and Item Matrices")
         self.U = cupy.random.normal(size=(self.num_u, self.dim + 1))
         self.V = cupy.random.normal(size=(self.dim + 1, self.num_i))
         self.U[:, -1] = 1
         # estimation is U dot V
         self.estimation = cupy.dot(self.U, self.V)
 
-        # plot loss
+        # Configure loss plots layout
         if plot_metric:
             groups = {'Precision@K': ['Precision@5', 'Precision@10'],
                       'Recall@K': ['Recall@5', 'Recall@10']}
             plot_losses = PlotLosses(groups=groups)
-
-        # build I_u_t, I_u_a
-        self.build_itemset_for_user()
 
         # Start Iteration
         all_item = set(self.item_list)
@@ -268,6 +274,7 @@ class bprH(object):
 
                 U_u = self.U[u, :-1]
                 # get r_hat_uIJ and r_hat_uJK
+                # TODO: why 0 -> change obj func?
                 r_hat_uI = cupy.average(self.estimation[u, sorted(I)]) if len(
                     I) != 0 else cupy.array([0])
                 r_hat_uJ = cupy.average(self.estimation[u, sorted(J)]) if len(
@@ -309,7 +316,7 @@ class bprH(object):
                     df_dVi = df_dbi * U_u
                     dR_dVi = 2 * self.lambda_v * V_bar_I / len(I)
 
-                    norm_nabula_Vi = cupy.linalg.norm((df_dVi - dR_dVi), ord=2).item()
+                    norm_nabula_Vi = cupy.linalg.norm((df_dVi - dR_dVi), ord=2)
 
                     # update V_i = V_i + gamma * (df_dVi - dR_dVi)
                     self.V[:-1, sorted(I)] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
@@ -325,7 +332,7 @@ class bprH(object):
                     df_dVj = df_dbj * U_u
                     dR_dVj = 2 * self.lambda_v * V_bar_J / len(J)
 
-                    norm_nabula_Vj = cupy.linalg.norm((df_dVj - dR_dVj), ord=2).item()
+                    norm_nabula_Vj = cupy.linalg.norm((df_dVj - dR_dVj), ord=2)
 
                     # update V_j = V_j + gamma * (df_dVj - dR_dVj)
                     self.V[:-1, sorted(J)] += self.gamma * (df_dVj - dR_dVj)[:, None]  # trick: transpose here
@@ -341,7 +348,7 @@ class bprH(object):
                     df_dVk = df_dbk * U_u
                     dR_dVk = 2 * self.lambda_v * V_bar_K / len(K)
 
-                    norm_nabula_Vk = cupy.linalg.norm((df_dVk - dR_dVk), ord=2).item()
+                    norm_nabula_Vk = cupy.linalg.norm((df_dVk - dR_dVk), ord=2)
 
                     # update V_k = V_k + gamma * (df_dVk - dR_dVk)
                     self.V[:-1, sorted(K)] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
@@ -353,28 +360,49 @@ class bprH(object):
                 # calculate loss
                 f_Theta = cupy.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + cupy.log(sigmoid(r_hat_uJK))
                 regula = self.lambda_u * cupy.linalg.norm(U_u, ord=2) + self.lambda_v * (
-                    (cupy.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
-                        cupy.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
-                        cupy.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
-                                 (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
-                             b_K if len(K) != 0 else 0) ** 2)
+                        (cupy.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
+                            cupy.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
+                            cupy.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
+                                     (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
+                                 b_K if len(K) != 0 else 0) ** 2)
                 bprh_loss = f_Theta - regula
+                if print_metric:
 
-                # calculate metrics on test data
-                user_to_eval = sorted(set(self.test_data.UserID))
-                scoring_list_5, precision_5, recall_5, avg_auc = self.scoring(user_to_eval=user_to_eval,
-                                                                              ground_truth=self.test_data, K=5)
-                scoring_list_10, precision_10, recall_10, _ = self.scoring(user_to_eval=user_to_eval,
-                                                                           ground_truth=self.test_data,
-                                                                           K=10)
+                    # calculate metrics on test data
+                    user_to_eval = sorted(set(self.test_data.UserID))
+                    scoring_list_5, precision_5, recall_5, avg_auc = self.scoring(user_to_eval=user_to_eval,
+                                                                                  ground_truth=self.test_data, K=5)
+                    scoring_list_10, precision_10, recall_10, _ = self.scoring(user_to_eval=user_to_eval,
+                                                                               ground_truth=self.test_data,
+                                                                               K=10)
+                    # Postfix will be displayed on the right,
+                    # formatted automatically based on argument's datatype
+                    t.set_postfix(loss=bprh_loss,
+                                  auc=avg_auc,
+                                  precision_5=precision_5,
+                                  recall_5=recall_5,
+                                  precision_10=precision_10,
+                                  recall_10=recall_10,
+                                  norm_nabula_U_u=norm_nabula_U_u,
+                                  norm_nabula_Vi=norm_nabula_Vi,
+                                  norm_nabula_Vj=norm_nabula_Vj,
+                                  norm_nabula_Vk=norm_nabula_Vk,
+                                  len_I=len(I),
+                                  len_J=len(J),
+                                  len_K=len(K))
+                    # log history
+                    self.eval_hist.append([index, precision_5, precision_10, recall_5, recall_10])
+                else:
+                    # Postfix will be displayed on the right,
+                    # formatted automatically based on argument's datatype
+                    t.set_postfix(
+                                  len_I=len(I),
+                                  len_J=len(J),
+                                  len_K=len(K))
+
                 # update estimation
                 self.estimation = cupy.dot(self.U, self.V)
-                # Postfix will be displayed on the right,
-                # formatted automatically based on argument's datatype
-                t.set_postfix(loss=bprh_loss, auc=avg_auc, precision_5=precision_5, recall_5=recall_5,
-                              precision_10=precision_10,
-                              recall_10=recall_10, norm_nabula_U_u=norm_nabula_U_u, norm_nabula_Vi=norm_nabula_Vi,
-                              norm_nabula_Vj=norm_nabula_Vj, norm_nabula_Vk=norm_nabula_Vk)
+
                 if plot_metric:
                     plot_losses.update({
                         'Precision@5': precision_5,
@@ -383,8 +411,6 @@ class bprH(object):
                         'Recall@10': recall_10
                     })
                     plot_losses.send()
-                # log history
-                self.eval_hist.append([index, precision_5, precision_10, recall_5, recall_10])
 
     def predict_estimation(self, user_to_predict, item_to_predict=None):
         if item_to_predict is None:
