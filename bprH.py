@@ -313,7 +313,7 @@ class bprH(object):
 
                 if len(J) != 0:
                     # NABULA V_j
-                    df_dbj = (- sigmoid(- spec_alpha_u * r_hat_uIJ) / spec_alpha_u + sigmoid(- r_hat_uJK)) / len(J)
+                    df_dbj = (- sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u + sigmoid(- r_hat_uJK)) / len(J)
                     dR_dbj = 2 * self.lambda_b * b_J / len(J)
                     df_dVj = df_dbj * U_u
                     dR_dVj = 2 * self.lambda_v * V_bar_J / len(J)

@@ -200,8 +200,8 @@ class bprH(object):
             cupy.random.seed(0)
 
         print("Initializing User and Item Matrices")
-        self.U = cupy.random.normal(size=(self.num_u, self.dim + 1))
-        self.V = cupy.random.normal(size=(self.dim + 1, self.num_i))
+        self.U = cupy.random.uniform(size=(self.num_u, self.dim + 1))
+        self.V = cupy.random.uniform(size=(self.dim + 1, self.num_i))
         self.U[:, -1] = 1
         # estimation is U dot V
         self.estimation = cupy.dot(self.U, self.V)
@@ -214,6 +214,7 @@ class bprH(object):
 
         # Start Iteration
         all_item = set(self.item_list)
+        print("Start Training")
         with trange(self.num_iter) as t:
             for index in t:
                 # Description will be displayed on the left
@@ -268,13 +269,16 @@ class bprH(object):
                     k = None
                     K = set()
 
+                if (len(I) == 0) | (len(J) == 0) | (len(K) == 0):
+                    continue
+
                 # calculate intermediate variables
                 # get specific alpha_u
                 spec_alpha_u = self.alpha_u[u]['alpha']
 
                 U_u = self.U[u, :-1]
                 # get r_hat_uIJ and r_hat_uJK
-                # TODO: why 0 -> change obj func?
+                # TODO: why 0 -> whay if change obj func?
                 r_hat_uI = cupy.average(self.estimation[u, sorted(I)]) if len(
                     I) != 0 else cupy.array([0])
                 r_hat_uJ = cupy.average(self.estimation[u, sorted(J)]) if len(
@@ -301,61 +305,61 @@ class bprH(object):
 
                 # get derivatives and update
 
-                # NABULA U_u
+                # NABLA U_u
                 df_dUu = sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u * (V_bar_I - V_bar_J) + \
                          sigmoid(- r_hat_uJK) * (V_bar_J - V_bar_K)
                 dR_dUu = 2 * self.lambda_u * U_u
                 # update U_u = U_u + gamma * (df_dUu - dR_dUu)
-                norm_nabula_U_u = cupy.linalg.norm((df_dUu - dR_dUu), ord=2)
+                norm_NABLA_U_u = cupy.linalg.norm((df_dUu - dR_dUu), ord=2)
                 self.U[u, :-1] += self.gamma * (df_dUu - dR_dUu)
 
                 if len(I) != 0:
-                    # NABULA V_i
+                    # NABLA V_i
                     df_dbi = sigmoid(- r_hat_uIJ / spec_alpha_u) / (len(I) * spec_alpha_u)
                     dR_dbi = 2 * self.lambda_b * b_I / len(I)
                     df_dVi = df_dbi * U_u
                     dR_dVi = 2 * self.lambda_v * V_bar_I / len(I)
 
-                    norm_nabula_Vi = cupy.linalg.norm((df_dVi - dR_dVi), ord=2)
+                    norm_NABLA_Vi = cupy.linalg.norm((df_dVi - dR_dVi), ord=2)
 
                     # update V_i = V_i + gamma * (df_dVi - dR_dVi)
                     self.V[:-1, sorted(I)] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
                     # update b_i = b_i + gamma * (df_dbi - dR_dbi)
                     self.V[-1, sorted(I)] += self.gamma * (df_dbi - dR_dbi)
                 else:
-                    norm_nabula_Vi = 0
+                    norm_NABLA_Vi = 0
 
                 if len(J) != 0:
-                    # NABULA V_j
-                    df_dbj = (- sigmoid(- spec_alpha_u * r_hat_uIJ) / spec_alpha_u + sigmoid(- r_hat_uJK)) / len(J)
+                    # NABLA V_j
+                    df_dbj = (- sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u + sigmoid(- r_hat_uJK)) / len(J)
                     dR_dbj = 2 * self.lambda_b * b_J / len(J)
                     df_dVj = df_dbj * U_u
                     dR_dVj = 2 * self.lambda_v * V_bar_J / len(J)
 
-                    norm_nabula_Vj = cupy.linalg.norm((df_dVj - dR_dVj), ord=2)
+                    norm_NABLA_Vj = cupy.linalg.norm((df_dVj - dR_dVj), ord=2)
 
                     # update V_j = V_j + gamma * (df_dVj - dR_dVj)
                     self.V[:-1, sorted(J)] += self.gamma * (df_dVj - dR_dVj)[:, None]  # trick: transpose here
                     # update b_j = b_j + gamma * (df_dbj - dR_dbj)
                     self.V[-1, sorted(J)] += self.gamma * (df_dbj - dR_dbj)
                 else:
-                    norm_nabula_Vj = 0
+                    norm_NABLA_Vj = 0
 
                 if len(K) != 0:
-                    # NABULA V_k
+                    # NABLA V_k
                     df_dbk = - sigmoid(- r_hat_uJK) / len(K)
                     dR_dbk = 2 * self.lambda_b * b_K / len(K)
                     df_dVk = df_dbk * U_u
                     dR_dVk = 2 * self.lambda_v * V_bar_K / len(K)
 
-                    norm_nabula_Vk = cupy.linalg.norm((df_dVk - dR_dVk), ord=2)
+                    norm_NABLA_Vk = cupy.linalg.norm((df_dVk - dR_dVk), ord=2)
 
                     # update V_k = V_k + gamma * (df_dVk - dR_dVk)
                     self.V[:-1, sorted(K)] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
                     # update b_k = b_k + gamma * (df_dbk - dR_dbk)
                     self.V[-1, sorted(K)] += self.gamma * (df_dbk - dR_dbk)
                 else:
-                    norm_nabula_Vk = 0
+                    norm_NABLA_Vk = 0
 
                 # calculate loss
                 f_Theta = cupy.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + cupy.log(sigmoid(r_hat_uJK))
@@ -366,6 +370,12 @@ class bprH(object):
                                      (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
                                  b_K if len(K) != 0 else 0) ** 2)
                 bprh_loss = f_Theta - regula
+
+                # estimation changed
+                est_changed = cupy.linalg.norm(cupy.dot(self.U, self.V) - self.estimation)
+                # update estimation
+                self.estimation = cupy.dot(self.U, self.V)
+
                 if print_metric:
 
                     # calculate metrics on test data
@@ -383,10 +393,10 @@ class bprH(object):
                                   recall_5=recall_5,
                                   precision_10=precision_10,
                                   recall_10=recall_10,
-                                  norm_nabula_U_u=norm_nabula_U_u,
-                                  norm_nabula_Vi=norm_nabula_Vi,
-                                  norm_nabula_Vj=norm_nabula_Vj,
-                                  norm_nabula_Vk=norm_nabula_Vk,
+                                  norm_NABLA_U_u=norm_NABLA_U_u,
+                                  norm_NABLA_Vi=norm_NABLA_Vi,
+                                  norm_NABLA_Vj=norm_NABLA_Vj,
+                                  norm_NABLA_Vk=norm_NABLA_Vk,
                                   len_I=len(I),
                                   len_J=len(J),
                                   len_K=len(K))
@@ -395,13 +405,10 @@ class bprH(object):
                 else:
                     # Postfix will be displayed on the right,
                     # formatted automatically based on argument's datatype
-                    t.set_postfix(
+                    t.set_postfix(est_changed=est_changed,
                                   len_I=len(I),
                                   len_J=len(J),
                                   len_K=len(K))
-
-                # update estimation
-                self.estimation = cupy.dot(self.U, self.V)
 
                 if plot_metric:
                     plot_losses.update({
@@ -436,6 +443,7 @@ class bprH(object):
             est_pref_of_u = self.estimation[u, :]
             #
             est_pref_sort_index = est_pref_of_u.argsort()[::-1].get()
+            #user_rec_dict[u] = set(est_pref_sort_index[:K])
             rec_item_cnt = 0
             for item_id in est_pref_sort_index:
                 if rec_item_cnt == K:
@@ -473,13 +481,13 @@ class bprH(object):
         user_rec_dict = self.recommend(user_to_recommend=user_to_eval, K=K)
         scoring_list = []
         # clean ground truth
-        ground_truth = ground_truth[ground_truth.Action == 'P']
+        ground_truth_cleaned = ground_truth[ground_truth.Action == 'P']
         # build two sets with users for AUC
         if (self.I_test_u is None) | (self.I_test_u_not is None):
             self.I_test_u = dict()
             self.I_test_u_not = dict()
             for u in user_to_eval:
-                self.I_test_u[u] = set(ground_truth[ground_truth.UserID == u].ItemID)
+                self.I_test_u[u] = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
                 self.I_test_u_not[u] = set(self.item_list) - self.I_test_u[u]
 
         # begin iteration
