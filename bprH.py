@@ -14,6 +14,10 @@ def sigmoid(z):
     return 1 / (1 + np.exp(-z))
 
 
+def indicator(z):
+    return 1 if z else 0
+
+
 def load_model(load_path):
     with open(load_path, 'rb') as model_input:
         model_instance = pickle.load(model_input)
@@ -87,10 +91,10 @@ class bprH(object):
         user_set_bar = tqdm(self.user_list)
         for u in user_set_bar:
             alpha_u[u] = dict()
-            I_t_u = set(X[(X.UserID == u) & (X.Action == target_action)].ItemID)
-            # TODO: filtered item set
+            I_t_u = self.I_u_t[u]
+            # Notice we only have View action so we do not need filtered item set
             for x in auxiliary_action:
-                I_a_u = set(X[(X.UserID == u) & (X.Action == x)].ItemID)
+                I_a_u = self.I_u_a[u]
                 # Equation Reference to page 86 section 3.3
                 # if I_t_u is 0, then we set C_u_at to be 0
                 # if I_a_u is 0, then we set C_u_ta to be 0
@@ -104,13 +108,13 @@ class bprH(object):
                 # We have only one auxiliary action 'V'
                 alpha_u[u]['alpha'] = self.omega * self.rho * C_u_X
 
-        #temp = pd.DataFrame.from_dict(C_u, orient='index')
+        # temp = pd.DataFrame.from_dict(C_u, orient='index')
         # We have only one auxiliary action 'V'
-        #temp['alpha'] = self.omega * self.rho * temp.V
-        #alpha_u = temp
-        #del temp
-        #alpha_u.reset_index(inplace=True)
-        #alpha_u.columns = ['UserID', 'V', 'alpha']
+        # temp['alpha'] = self.omega * self.rho * temp.V
+        # alpha_u = temp
+        # del temp
+        # alpha_u.reset_index(inplace=True)
+        # alpha_u.columns = ['UserID', 'V', 'alpha']
         return alpha_u
 
     def itemset_coselection(self, saved_path, X, y=None):
@@ -150,8 +154,9 @@ class bprH(object):
 
     def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
             saved_path='data/item-set-coselection.pkl', coselection=False, plot_metric=False):
-        # TODO: make sure train and test works with inconsistent user and item list
-
+        # To make sure train and test works with inconsistent user and item list,
+        # we transform user and item's string ID to int ID so that their ID is their index in U and V
+        print("Registering Model Parameters")
         # rename user and item
         self.user_original_id_list = sorted(set(original_user_list))
         self.item_original_id_list = sorted(set(original_item_list))
@@ -171,6 +176,9 @@ class bprH(object):
         self.num_u = len(self.user_list)
         self.num_i = len(self.item_list)
 
+        # build I_u_t, I_u_a (pre-computing for acceleration)
+        self.build_itemset_for_user()
+
         # Calculate auxiliary-target correlation C for every user and each types of auxiliary action
         self.alpha_u = self.auxiliary_target_correlation(X=self.train_data)
 
@@ -184,6 +192,7 @@ class bprH(object):
         else:
             np.random.seed(0)
 
+        print("Initializing User and Item Matrices")
         self.U = np.random.normal(size=(self.num_u, self.dim + 1))
         self.V = np.random.normal(size=(self.dim + 1, self.num_i))
         self.U[:, -1] = 1
@@ -195,8 +204,6 @@ class bprH(object):
             groups = {'Precision@K': ['Precision@5', 'Precision@10'], 'Recall@K': ['Recall@5', 'Recall@10']}
             plot_losses = PlotLosses(groups=groups)
 
-        # build I_u_t, I_u_a
-        self.build_itemset_for_user()
 
         # Start Iteration
         all_item = set(self.item_list)
@@ -258,7 +265,7 @@ class bprH(object):
                 # get specific alpha_u
                 spec_alpha_u = self.alpha_u[u]['alpha']
 
-                U_u = self.U[u, :-1]
+                U_u = self.U[u, :-1].copy()
                 # get r_hat_uIJ and r_hat_uJK
                 r_hat_uI = np.average(self.estimation[u, sorted(I)]) if len(
                     I) != 0 else 0
@@ -284,6 +291,26 @@ class bprH(object):
                 b_J = np.average(self.V[-1, sorted(J)]) if len(J) != 0 else 0
                 b_K = np.average(self.V[-1, sorted(K)]) if len(K) != 0 else 0
 
+                # here we want to examine the condition of empty sets
+                indicator_I = indicator(len(I) == 0)
+                indicator_J = indicator(len(J) == 0)
+                indicator_K = indicator(len(K) == 0)
+                indicator_sum = indicator_I + indicator_J + indicator_K
+
+                if 0 <= indicator_sum <= 1:
+                    # these are the cases when only one set are empty or no set is empty
+                    # when all three are not empty, or I is empty, or K is empty, it is
+                    # easy to rewrite the obj by multiplying the indicator
+                    # when J is empty, we have to rewrite the obj
+                    if indicator_J == 0:
+                        print("bobo0")
+                    else:
+
+                        print("bobo")
+                else:
+                    # these are the cases when at least two sets are empty
+                    # at these cases, we ignore this user and continue the loop
+                    continue
 
                 # get derivatives and update
 

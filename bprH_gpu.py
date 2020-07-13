@@ -5,6 +5,7 @@ import cupy
 from random import choice
 from tqdm import tqdm, trange
 from livelossplot import PlotLosses
+from numba import jit
 
 
 def adv_index(list_to_index, list_to_match):
@@ -13,6 +14,13 @@ def adv_index(list_to_index, list_to_match):
 
 def sigmoid(z):
     return cupy.reciprocal(1 + cupy.exp(-z))
+
+
+def indicator(z):
+    return 1 if z else 0
+
+def indicator_len(z):
+    return len(z) if len(z) != 0 else 1
 
 
 def load_model(load_path):
@@ -161,10 +169,11 @@ class bprH(object):
                     self.train_data.Action == 'V')].ItemID)
 
     def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
-            saved_path='data/item-set-coselection.pkl', coselection=False, plot_metric=False, print_metric=False):
+            saved_path='data/item-set-coselection.pkl', correlation=True, coselection=False, plot_metric=False, log_metric=False):
         # To make sure train and test works with inconsistent user and item list,
         # we transform user and item's string ID to int ID so that their ID is their index in U and V
         print("Registering Model Parameters")
+        # rename user and item
         self.user_original_id_list = sorted(set(original_user_list))
         self.item_original_id_list = sorted(set(original_item_list))
 
@@ -187,7 +196,16 @@ class bprH(object):
         self.build_itemset_for_user()
 
         # Calculate auxiliary-target correlation C for every user and each types of auxiliary action
-        self.alpha_u = self.auxiliary_target_correlation(X=self.train_data)
+        if correlation:
+            self.alpha_u = self.auxiliary_target_correlation(X=self.train_data)
+        else:
+            print("Calculate auxiliary-target correlation")
+            alpha_u_all_ones = dict()
+            user_set_bar = tqdm(self.user_list)
+            for u in user_set_bar:
+                alpha_u_all_ones[u] = dict()
+                alpha_u_all_ones[u]['alpha'] = 1.0
+            self.alpha_u = alpha_u_all_ones.copy()
 
         # Generate item-set based on co-selection
         if coselection:
@@ -200,9 +218,9 @@ class bprH(object):
             cupy.random.seed(0)
 
         print("Initializing User and Item Matrices")
-        self.U = cupy.random.uniform(size=(self.num_u, self.dim + 1))
-        self.V = cupy.random.uniform(size=(self.dim + 1, self.num_i))
-        self.U[:, -1] = 1
+        self.U = cupy.random.normal(size=(self.num_u, self.dim + 1))
+        self.V = cupy.random.normal(size=(self.dim + 1, self.num_i))
+        self.U[:, -1] = 1.0
         # estimation is U dot V
         self.estimation = cupy.dot(self.U, self.V)
 
@@ -269,16 +287,12 @@ class bprH(object):
                     k = None
                     K = set()
 
-                if (len(I) == 0) | (len(J) == 0) | (len(K) == 0):
-                    continue
-
                 # calculate intermediate variables
                 # get specific alpha_u
                 spec_alpha_u = self.alpha_u[u]['alpha']
-
-                U_u = self.U[u, :-1]
+                # TODO: Check all update codes to see copy pattern
+                U_u = self.U[u, :-1].copy()
                 # get r_hat_uIJ and r_hat_uJK
-                # TODO: why 0 -> whay if change obj func?
                 r_hat_uI = cupy.average(self.estimation[u, sorted(I)]) if len(
                     I) != 0 else cupy.array([0])
                 r_hat_uJ = cupy.average(self.estimation[u, sorted(J)]) if len(
@@ -288,6 +302,7 @@ class bprH(object):
 
                 r_hat_uIJ = r_hat_uI - r_hat_uJ
                 r_hat_uJK = r_hat_uJ - r_hat_uK
+                r_hat_uIK = r_hat_uI - r_hat_uK
                 # get V_bar_I, V_bar_J, V_bar_K
                 V_bar_I = cupy.average(self.V[:-1, sorted(I)], axis=1) if len(
                     I) != 0 else cupy.zeros(
@@ -303,121 +318,142 @@ class bprH(object):
                 b_J = cupy.average(self.V[-1, sorted(J)]) if len(J) != 0 else cupy.array([0])
                 b_K = cupy.average(self.V[-1, sorted(K)]) if len(K) != 0 else cupy.array([0])
 
-                # get derivatives and update
+                # here we want to examine the condition of empty sets
+                indicator_I = indicator(len(I) == 0)
+                indicator_J = indicator(len(J) == 0)
+                indicator_K = indicator(len(K) == 0)
+                indicator_sum = indicator_I + indicator_J + indicator_K
 
-                # NABLA U_u
-                df_dUu = sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u * (V_bar_I - V_bar_J) + \
-                         sigmoid(- r_hat_uJK) * (V_bar_J - V_bar_K)
-                dR_dUu = 2 * self.lambda_u * U_u
-                # update U_u = U_u + gamma * (df_dUu - dR_dUu)
-                norm_NABLA_U_u = cupy.linalg.norm((df_dUu - dR_dUu), ord=2)
-                self.U[u, :-1] += self.gamma * (df_dUu - dR_dUu)
+                if 0 <= indicator_sum <= 1:
+                    # these are the cases when only one set are empty or no set is empty
+                    # when all three are not empty, or I is empty, or K is empty, it is
+                    # easy to rewrite the obj by multiplying the indicator
+                    # when J is empty, we have to rewrite the obj
+                    if indicator_J == 1:
+                        # when J is empty
 
-                if len(I) != 0:
-                    # NABLA V_i
-                    df_dbi = sigmoid(- r_hat_uIJ / spec_alpha_u) / (len(I) * spec_alpha_u)
-                    dR_dbi = 2 * self.lambda_b * b_I / len(I)
-                    df_dVi = df_dbi * U_u
-                    dR_dVi = 2 * self.lambda_v * V_bar_I / len(I)
+                        # NABLA U_u
+                        df_dUu = sigmoid(- r_hat_uIK) * (V_bar_I - V_bar_K)
+                        dR_dUu = 2 * self.lambda_u * U_u
+                        # update U_u = U_u + gamma * (df_dUu - dR_dUu)
+                        self.U[u, :-1] += self.gamma * (df_dUu - dR_dUu)
 
-                    norm_NABLA_Vi = cupy.linalg.norm((df_dVi - dR_dVi), ord=2)
+                        # NABLA V_i
+                        df_dbi = (1 - indicator_I) * sigmoid(- r_hat_uIK ) / indicator_len(I)
+                        dR_dbi = (1 - indicator_I) * 2 * self.lambda_b * b_I / indicator_len(I)
+                        df_dVi = df_dbi * U_u
+                        dR_dVi = 2 * self.lambda_v * V_bar_I / indicator_len(I)
+                        # update V_i = V_i + gamma * (df_dVi - dR_dVi)
+                        self.V[:-1, sorted(I)] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
+                        # update b_i = b_i + gamma * (df_dbi - dR_dbi)
+                        self.V[-1, sorted(I)] += self.gamma * (df_dbi - dR_dbi)
 
-                    # update V_i = V_i + gamma * (df_dVi - dR_dVi)
-                    self.V[:-1, sorted(I)] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
-                    # update b_i = b_i + gamma * (df_dbi - dR_dbi)
-                    self.V[-1, sorted(I)] += self.gamma * (df_dbi - dR_dbi)
+                        # No change on J
+
+                        # NABLA V_k
+                        df_dbk = (1 - indicator_K) * - sigmoid(- r_hat_uIK) / indicator_len(K)
+                        dR_dbk = (1 - indicator_K) * 2 * self.lambda_b * b_K / indicator_len(K)
+                        df_dVk = df_dbk * U_u
+                        dR_dVk = 2 * self.lambda_v * V_bar_K / indicator_len(K)
+
+                        # update V_k = V_k + gamma * (df_dVk - dR_dVk)
+                        self.V[:-1, sorted(K)] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
+                        # update b_k = b_k + gamma * (df_dbk - dR_dbk)
+                        self.V[-1, sorted(K)] += self.gamma * (df_dbk - dR_dbk)
+
+                    else:
+                        # when J is not empty
+                        # NABLA U_u
+                        df_dUu = (1 - indicator_I) * sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u * (V_bar_I - V_bar_J) + \
+                                 (1 - indicator_K) * sigmoid(- r_hat_uJK) * (V_bar_J - V_bar_K)
+                        dR_dUu = 2 * self.lambda_u * U_u
+                        # update U_u = U_u + gamma * (df_dUu - dR_dUu)
+                        self.U[u, :-1] += self.gamma * (df_dUu - dR_dUu)
+
+                        # NABLA V_i
+                        df_dbi = (1 - indicator_I) * sigmoid(- r_hat_uIJ / spec_alpha_u) / (indicator_len(I) * spec_alpha_u)
+                        dR_dbi = (1 - indicator_I) * 2 * self.lambda_b * b_I / indicator_len(I)
+                        df_dVi = df_dbi * U_u
+                        dR_dVi = 2 * self.lambda_v * V_bar_I / indicator_len(I)
+                        # update V_i = V_i + gamma * (df_dVi - dR_dVi)
+                        self.V[:-1, sorted(I)] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
+                        # update b_i = b_i + gamma * (df_dbi - dR_dbi)
+                        self.V[-1, sorted(I)] += self.gamma * (df_dbi - dR_dbi)
+
+                        # NABLA V_j
+                        df_dbj = (1 - indicator_I) * (- sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u +
+                                                                          (1 - indicator_K) * sigmoid(- r_hat_uJK)) / indicator_len(J)
+                        dR_dbj = 2 * self.lambda_b * b_J / indicator_len(J)
+                        df_dVj = df_dbj * U_u
+                        dR_dVj = 2 * self.lambda_v * V_bar_J / indicator_len(J)
+
+                        # update V_j = V_j + gamma * (df_dVj - dR_dVj)
+                        self.V[:-1, sorted(J)] += self.gamma * (df_dVj - dR_dVj)[:, None]  # trick: transpose here
+                        # update b_j = b_j + gamma * (df_dbj - dR_dbj)
+                        self.V[-1, sorted(J)] += self.gamma * (df_dbj - dR_dbj)
+
+                        # NABLA V_k
+                        df_dbk = (1 - indicator_K) * - sigmoid(- r_hat_uJK) / indicator_len(K)
+                        dR_dbk = (1 - indicator_K) * 2 * self.lambda_b * b_K / indicator_len(K)
+                        df_dVk = df_dbk * U_u
+                        dR_dVk = 2 * self.lambda_v * V_bar_K / indicator_len(K)
+
+                        # update V_k = V_k + gamma * (df_dVk - dR_dVk)
+                        self.V[:-1, sorted(K)] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
+                        # update b_k = b_k + gamma * (df_dbk - dR_dbk)
+                        self.V[-1, sorted(K)] += self.gamma * (df_dbk - dR_dbk)
+
                 else:
-                    norm_NABLA_Vi = 0
-
-                if len(J) != 0:
-                    # NABLA V_j
-                    df_dbj = (- sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u + sigmoid(- r_hat_uJK)) / len(J)
-                    dR_dbj = 2 * self.lambda_b * b_J / len(J)
-                    df_dVj = df_dbj * U_u
-                    dR_dVj = 2 * self.lambda_v * V_bar_J / len(J)
-
-                    norm_NABLA_Vj = cupy.linalg.norm((df_dVj - dR_dVj), ord=2)
-
-                    # update V_j = V_j + gamma * (df_dVj - dR_dVj)
-                    self.V[:-1, sorted(J)] += self.gamma * (df_dVj - dR_dVj)[:, None]  # trick: transpose here
-                    # update b_j = b_j + gamma * (df_dbj - dR_dbj)
-                    self.V[-1, sorted(J)] += self.gamma * (df_dbj - dR_dbj)
-                else:
-                    norm_NABLA_Vj = 0
-
-                if len(K) != 0:
-                    # NABLA V_k
-                    df_dbk = - sigmoid(- r_hat_uJK) / len(K)
-                    dR_dbk = 2 * self.lambda_b * b_K / len(K)
-                    df_dVk = df_dbk * U_u
-                    dR_dVk = 2 * self.lambda_v * V_bar_K / len(K)
-
-                    norm_NABLA_Vk = cupy.linalg.norm((df_dVk - dR_dVk), ord=2)
-
-                    # update V_k = V_k + gamma * (df_dVk - dR_dVk)
-                    self.V[:-1, sorted(K)] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
-                    # update b_k = b_k + gamma * (df_dbk - dR_dbk)
-                    self.V[-1, sorted(K)] += self.gamma * (df_dbk - dR_dbk)
-                else:
-                    norm_NABLA_Vk = 0
+                    # these are the cases when at least two sets are empty
+                    # at these cases, we ignore this user and continue the loop
+                    continue
 
                 # calculate loss
-                f_Theta = cupy.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + cupy.log(sigmoid(r_hat_uJK))
-                regula = self.lambda_u * cupy.linalg.norm(U_u, ord=2) + self.lambda_v * (
-                        (cupy.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
-                            cupy.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
-                            cupy.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
-                                     (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
-                                 b_K if len(K) != 0 else 0) ** 2)
-                bprh_loss = f_Theta - regula
+                # f_Theta = cupy.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + cupy.log(sigmoid(r_hat_uJK))
+                # regula = self.lambda_u * cupy.linalg.norm(U_u, ord=2) + self.lambda_v * (
+                #        (cupy.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
+                #            cupy.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
+                #            cupy.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
+                #                     (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
+                #                 b_K if len(K) != 0 else 0) ** 2)
+                # bprh_loss = f_Theta - regula
 
                 # estimation changed
                 est_changed = cupy.linalg.norm(cupy.dot(self.U, self.V) - self.estimation)
                 # update estimation
                 self.estimation = cupy.dot(self.U, self.V)
 
-                if print_metric:
+                # we only calculate metric when the num of iter % 100 == 0
+                if index % 100 == 0:
+                    if log_metric | plot_metric:
+                        # calculate metrics on test data
+                        user_to_eval = sorted(set(self.test_data.UserID))
+                        scoring_list_5, precision_5, recall_5, avg_auc = self.scoring(user_to_eval=user_to_eval,
+                                                                                      ground_truth=self.test_data,
+                                                                                      K=5,
+                                                                                      train_data_as_reference_flag=True)
+                        scoring_list_10, precision_10, recall_10, _ = self.scoring(user_to_eval=user_to_eval,
+                                                                                   ground_truth=self.test_data,
+                                                                                   K=10,
+                                                                                   train_data_as_reference_flag=True)
+                    if log_metric:
+                        self.eval_hist.append([index, precision_5, precision_10, recall_5, recall_10])
+                    if plot_metric:
+                        plot_losses.update({
+                            'Precision@5': precision_5,
+                            'Precision@10': precision_10,
+                            'Recall@5': recall_5,
+                            'Recall@10': recall_10
+                        })
+                        plot_losses.send()
 
-                    # calculate metrics on test data
-                    user_to_eval = sorted(set(self.test_data.UserID))
-                    scoring_list_5, precision_5, recall_5, avg_auc = self.scoring(user_to_eval=user_to_eval,
-                                                                                  ground_truth=self.test_data, K=5)
-                    scoring_list_10, precision_10, recall_10, _ = self.scoring(user_to_eval=user_to_eval,
-                                                                               ground_truth=self.test_data,
-                                                                               K=10)
-                    # Postfix will be displayed on the right,
-                    # formatted automatically based on argument's datatype
-                    t.set_postfix(loss=bprh_loss,
-                                  auc=avg_auc,
-                                  precision_5=precision_5,
-                                  recall_5=recall_5,
-                                  precision_10=precision_10,
-                                  recall_10=recall_10,
-                                  norm_NABLA_U_u=norm_NABLA_U_u,
-                                  norm_NABLA_Vi=norm_NABLA_Vi,
-                                  norm_NABLA_Vj=norm_NABLA_Vj,
-                                  norm_NABLA_Vk=norm_NABLA_Vk,
-                                  len_I=len(I),
-                                  len_J=len(J),
-                                  len_K=len(K))
-                    # log history
-                    self.eval_hist.append([index, precision_5, precision_10, recall_5, recall_10])
-                else:
-                    # Postfix will be displayed on the right,
-                    # formatted automatically based on argument's datatype
-                    t.set_postfix(est_changed=est_changed,
-                                  len_I=len(I),
-                                  len_J=len(J),
-                                  len_K=len(K))
-
-                if plot_metric:
-                    plot_losses.update({
-                        'Precision@5': precision_5,
-                        'Precision@10': precision_10,
-                        'Recall@5': recall_5,
-                        'Recall@10': recall_10
-                    })
-                    plot_losses.send()
+                # Postfix will be displayed on the right,
+                # formatted automatically based on argument's datatype
+                t.set_postfix(
+                    est_changed=est_changed,
+                    len_I=len(I),
+                    len_J=len(J),
+                    len_K=len(K))
 
     def predict_estimation(self, user_to_predict, item_to_predict=None):
         if item_to_predict is None:
@@ -426,7 +462,7 @@ class bprH(object):
             return cupy.dot(self.U[adv_index(self.user_original_id_list, user_to_predict), :],
                             self.V[:, adv_index(self.item_original_id_list, item_to_predict)])
 
-    def recommend(self, user_to_recommend=None, K=5):
+    def recommend(self, user_to_recommend=None, K=5, train_data_as_reference_flag=True):
         if self.train_data is None:
             print("Train data has not been feed")
             return None
@@ -441,30 +477,24 @@ class bprH(object):
         for u in user_to_recommend:
             user_rec_dict[u] = set()
             est_pref_of_u = self.estimation[u, :]
-            #
+            # get the ranking for user u's pref of item
             est_pref_sort_index = est_pref_of_u.argsort()[::-1].get()
-            #user_rec_dict[u] = set(est_pref_sort_index[:K])
             rec_item_cnt = 0
-            for item_id in est_pref_sort_index:
-                if rec_item_cnt == K:
-                    break
-                if item_id not in self.I_u_t[u]:
-                    user_rec_dict[u].add(item_id)
-                    rec_item_cnt += 1
-
-            # rec_item_cnt = 0
-            # index_cnt = 0
-            # while rec_item_cnt < K:
-            #    if est_pref_sort_index[index_cnt] in self.I_u_t[u]:
-            #        index_cnt += 1
-            #    else:
-            #        user_rec_list.append([u, est_pref_sort_index[index_cnt]])
-            #        index_cnt += 1
-            #        rec_item_cnt += 1
+            # case of recommending on test data
+            if train_data_as_reference_flag:
+                for item_id in est_pref_sort_index:
+                    if rec_item_cnt == K:
+                        break
+                    if item_id not in self.I_u_t[u]:
+                        user_rec_dict[u].add(item_id)
+                        rec_item_cnt += 1
+            # case of recommending on train data
+            else:
+                user_rec_dict[u] = set(est_pref_sort_index[:K])
 
         return user_rec_dict
 
-    def scoring(self, ground_truth, K=5, user_to_eval=None, y=None):
+    def scoring(self, ground_truth, K=5, user_to_eval=None, y=None, train_data_as_reference_flag=True):
         """
 
         :param user_to_eval: user list to evaluate performance
@@ -478,25 +508,28 @@ class bprH(object):
 
         user_to_eval = sorted(set(user_to_eval))
         # get top K recommendation list
-        user_rec_dict = self.recommend(user_to_recommend=user_to_eval, K=K)
+        user_rec_dict = self.recommend(user_to_recommend=user_to_eval,
+                                       K=K,
+                                       train_data_as_reference_flag=train_data_as_reference_flag)
         scoring_list = []
         # clean ground truth
         ground_truth_cleaned = ground_truth[ground_truth.Action == 'P']
         # build two sets with users for AUC
-        if (self.I_test_u is None) | (self.I_test_u_not is None):
-            self.I_test_u = dict()
-            self.I_test_u_not = dict()
-            for u in user_to_eval:
-                self.I_test_u[u] = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
-                self.I_test_u_not[u] = set(self.item_list) - self.I_test_u[u]
+        #if (self.I_test_u is None) | (self.I_test_u_not is None):
+        #    self.I_test_u = dict()
+        #    self.I_test_u_not = dict()
+        #    for u in user_to_eval:
+        #        self.I_test_u[u] = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
+        #        self.I_test_u_not[u] = set(self.item_list) - self.I_test_u[u]
 
         # begin iteration
         for u in user_to_eval:
             rec_list_for_user_u = user_rec_dict[u]
             # get precision and recall
-            precision_K_for_u = len(rec_list_for_user_u.intersection(self.I_test_u[u])) / K
-            recall_K_for_u = len(rec_list_for_user_u.intersection(self.I_test_u[u])) / len(
-                self.I_test_u[u]) if len(self.I_test_u[u]) != 0 else np.nan
+            I_u_t = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
+            precision_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / K
+            recall_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / len(
+                I_u_t) if len(I_u_t) != 0 else np.nan
             # get auc
             # est_pref_of_u = self.estimation[u, :].get()
             E_u = 0
