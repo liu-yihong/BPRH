@@ -1,3 +1,10 @@
+'''
+Implementation for Qiu, Huihuai, et al.
+"BPRH: Bayesian personalized ranking for heterogeneous implicit feedback." Information Sciences 453 (2018): 80-98.
+
+Author: Yihong Liu
+For more details, please visit https://liu-yihong.github.io/2020/06/26/Understanding-BPR-COFISET-and-BPRH/
+'''
 import pickle
 import pandas as pd
 import numpy as np
@@ -165,11 +172,13 @@ class bprH(object):
         user_set_bar = tqdm(self.user_list)
         for u in user_set_bar:
             self.I_u_t[u] = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
+            # here we only have one auxiliary action 'V'
             self.I_u_a[u] = set(self.train_data[(self.train_data.UserID == u) & (
                     self.train_data.Action == 'V')].ItemID)
 
     def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
-            saved_path='data/item-set-coselection.pkl', correlation=True, coselection=False, plot_metric=False, log_metric=False):
+            saved_path='data/item-set-coselection.pkl', iter_to_log=100,
+            correlation=True, coselection=False, plot_metric=False, log_metric=False):
         # To make sure train and test works with inconsistent user and item list,
         # we transform user and item's string ID to int ID so that their ID is their index in U and V
         print("Registering Model Parameters")
@@ -220,6 +229,8 @@ class bprH(object):
         print("Initializing User and Item Matrices")
         self.U = cupy.random.normal(size=(self.num_u, self.dim + 1))
         self.V = cupy.random.normal(size=(self.dim + 1, self.num_i))
+        #self.U = cupy.zeros(shape=(self.num_u, self.dim + 1))
+        #self.V = cupy.zeros(shape=(self.dim + 1, self.num_i))
         self.U[:, -1] = 1.0
         # estimation is U dot V
         self.estimation = cupy.dot(self.U, self.V)
@@ -290,7 +301,7 @@ class bprH(object):
                 # calculate intermediate variables
                 # get specific alpha_u
                 spec_alpha_u = self.alpha_u[u]['alpha']
-                # TODO: Check all update codes to see copy pattern
+
                 U_u = self.U[u, :-1].copy()
                 # get r_hat_uIJ and r_hat_uJK
                 r_hat_uI = cupy.average(self.estimation[u, sorted(I)]) if len(
@@ -424,7 +435,7 @@ class bprH(object):
                 self.estimation = cupy.dot(self.U, self.V)
 
                 # we only calculate metric when the num of iter % 100 == 0
-                if index % 100 == 0:
+                if index % iter_to_log == 0:
                     if log_metric | plot_metric:
                         # calculate metrics on test data
                         user_to_eval = sorted(set(self.test_data.UserID))
@@ -545,7 +556,7 @@ class bprH(object):
         # precision_K = scoring_list.mean()['Precision@' + str(K)]
         # recall_K = scoring_list.mean()['Recall@' + str(K)]
         scoring_list = np.array(scoring_list)
-        scoring_average = scoring_list.mean(axis=0)
+        scoring_average = np.nanmean(scoring_list, axis=0)
         precision_K = scoring_average[1]
         recall_K = scoring_average[2]
         avg_auc = scoring_average[3]
