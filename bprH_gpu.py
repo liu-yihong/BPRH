@@ -15,6 +15,8 @@ from livelossplot import PlotLosses
 from numba import jit
 
 
+# TODO: update save module
+# TODO: implement update training module
 def adv_index(list_to_index, list_to_match):
     return [ind for ind, match in enumerate(list_to_index) if match in list_to_match]
 
@@ -25,6 +27,7 @@ def sigmoid(z):
 
 def indicator(z):
     return 1 if z else 0
+
 
 def indicator_len(z):
     return len(z) if len(z) != 0 else 1
@@ -45,7 +48,8 @@ def save_model(model_instance, saved_path):
 class bprH(object):
 
     def __init__(self, dim=10, omega=1, rho=1, lambda_u=0.5, lambda_v=0.1, lambda_b=0.1, gamma=0.001, num_iter=200,
-                 random_state=None):
+                 random_state=None,
+                 existed_model_path=None):
         """
         Initializing class instance bprH
         :param dim: the dimension of latent vector
@@ -89,10 +93,23 @@ class bprH(object):
         self.I_u_t = dict()
         self.I_u_a = dict()
 
-        self.I_test_u = None
-        self.I_test_u_not = None
+        self.I_u_t_test = dict()
 
         self.eval_hist = []
+
+        self.existed_model_path = existed_model_path
+
+    def load(self, model_path):
+        f = open(model_path, 'rb')
+        tmp_dict = pickle.load(f)
+        f.close()
+
+        self.__dict__.update(tmp_dict)
+
+    def save(self, model_path):
+        f = open(model_path, 'wb')
+        pickle.dump(self.__dict__, f, 2)
+        f.close()
 
     def auxiliary_target_correlation(self, X, y=None):
         """
@@ -157,6 +174,8 @@ class bprH(object):
         item_set_bar = tqdm(self.item_list)
         for i in item_set_bar:
             S[i] = set()
+            # overcome the cases when U[i] = 1
+            S[i].add(i)
             for j in self.item_list:
                 # If more than 2 users have target action on i and j, then j is included in S[i]
                 if len(U[i].intersection(U[j])) >= 2:
@@ -177,68 +196,81 @@ class bprH(object):
                     self.train_data.Action == 'V')].ItemID)
 
     def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
-            saved_path='data/item-set-coselection.pkl', iter_to_log=100,
+            model_saved_path='bprh_model.pkl',
+            iter_to_save=5000,
+            coselection_saved_path='data/item-set-coselection.pkl', iter_to_log=100,
             correlation=True, coselection=False, plot_metric=False, log_metric=False):
-        # To make sure train and test works with inconsistent user and item list,
-        # we transform user and item's string ID to int ID so that their ID is their index in U and V
-        print("Registering Model Parameters")
-        # rename user and item
-        self.user_original_id_list = sorted(set(original_user_list))
-        self.item_original_id_list = sorted(set(original_item_list))
+        # Here we do not load model -> train a new model
+        if self.existed_model_path is None:
+            # To make sure train and test works with inconsistent user and item list,
+            # we transform user and item's string ID to int ID so that their ID is their index in U and V
+            print("Registering Model Parameters")
+            # rename user and item
+            self.user_original_id_list = sorted(set(original_user_list))
+            self.item_original_id_list = sorted(set(original_item_list))
 
-        self.train_data = X.copy()
-        self.test_data = eval_X.copy()
+            self.train_data = X.copy()
+            self.test_data = eval_X.copy()
 
-        self.train_data.UserID = self.train_data.UserID.apply(lambda x: self.user_original_id_list.index(x))
-        self.train_data.ItemID = self.train_data.ItemID.apply(lambda x: self.item_original_id_list.index(x))
+            self.train_data.UserID = self.train_data.UserID.apply(lambda x: self.user_original_id_list.index(x))
+            self.train_data.ItemID = self.train_data.ItemID.apply(lambda x: self.item_original_id_list.index(x))
 
-        self.test_data.UserID = self.test_data.UserID.apply(lambda x: self.user_original_id_list.index(x))
-        self.test_data.ItemID = self.test_data.ItemID.apply(lambda x: self.item_original_id_list.index(x))
+            self.test_data.UserID = self.test_data.UserID.apply(lambda x: self.user_original_id_list.index(x))
+            self.test_data.ItemID = self.test_data.ItemID.apply(lambda x: self.item_original_id_list.index(x))
 
-        self.item_list = sorted(set([idx[0] for idx in enumerate(self.item_original_id_list)]))
-        self.user_list = sorted(set([idx[0] for idx in enumerate(self.user_original_id_list)]))
+            self.item_list = sorted(set([idx[0] for idx in enumerate(self.item_original_id_list)]))
+            self.user_list = sorted(set([idx[0] for idx in enumerate(self.user_original_id_list)]))
 
-        self.num_u = len(self.user_list)
-        self.num_i = len(self.item_list)
+            self.num_u = len(self.user_list)
+            self.num_i = len(self.item_list)
 
-        # build I_u_t, I_u_a (pre-computing for acceleration)
-        self.build_itemset_for_user()
+            # build I_u_t, I_u_a (pre-computing for acceleration)
+            self.build_itemset_for_user()
 
-        # Calculate auxiliary-target correlation C for every user and each types of auxiliary action
-        if correlation:
-            self.alpha_u = self.auxiliary_target_correlation(X=self.train_data)
+            # Calculate auxiliary-target correlation C for every user and each types of auxiliary action
+            if correlation:
+                self.alpha_u = self.auxiliary_target_correlation(X=self.train_data)
+            else:
+                print("Calculate auxiliary-target correlation")
+                alpha_u_all_ones = dict()
+                user_set_bar = tqdm(self.user_list)
+                for u in user_set_bar:
+                    alpha_u_all_ones[u] = dict()
+                    alpha_u_all_ones[u]['alpha'] = 1.0
+                self.alpha_u = alpha_u_all_ones.copy()
+
+            # Generate item-set based on co-selection
+            if coselection:
+                self.S = self.itemset_coselection(X=self.train_data, saved_path=coselection_saved_path)
+
+            # Initialization of User and Item Matrices
+            if self.random_state is not None:
+                cupy.random.seed(self.random_state)
+            else:
+                cupy.random.seed(0)
+
+            print("Initializing User and Item Matrices")
+            self.U = cupy.random.normal(size=(self.num_u, self.dim + 1))
+            self.V = cupy.random.normal(size=(self.dim + 1, self.num_i))
+            # self.U = cupy.zeros(shape=(self.num_u, self.dim + 1))
+            # self.V = cupy.zeros(shape=(self.dim + 1, self.num_i))
+            self.U[:, -1] = 1.0
+            # estimation is U dot V
+            self.estimation = cupy.dot(self.U, self.V)
         else:
-            print("Calculate auxiliary-target correlation")
-            alpha_u_all_ones = dict()
-            user_set_bar = tqdm(self.user_list)
-            for u in user_set_bar:
-                alpha_u_all_ones[u] = dict()
-                alpha_u_all_ones[u]['alpha'] = 1.0
-            self.alpha_u = alpha_u_all_ones.copy()
-
-        # Generate item-set based on co-selection
-        if coselection:
-            self.S = self.itemset_coselection(X=self.train_data, saved_path=saved_path)
-
-        # Initialization of User and Item Matrices
-        if self.random_state is not None:
-            cupy.random.seed(self.random_state)
-        else:
-            cupy.random.seed(0)
-
-        print("Initializing User and Item Matrices")
-        self.U = cupy.random.normal(size=(self.num_u, self.dim + 1))
-        self.V = cupy.random.normal(size=(self.dim + 1, self.num_i))
-        #self.U = cupy.zeros(shape=(self.num_u, self.dim + 1))
-        #self.V = cupy.zeros(shape=(self.dim + 1, self.num_i))
-        self.U[:, -1] = 1.0
-        # estimation is U dot V
-        self.estimation = cupy.dot(self.U, self.V)
+            # if model_load_path provided, we load model parameter and retraining
+            new_num_iter = self.num_iter
+            f = open(self.existed_model_path, 'rb')
+            tmp_dict = pickle.load(f)
+            f.close()
+            self.__dict__.update(tmp_dict)
+            setattr(self, "num_iter", new_num_iter)
 
         # Configure loss plots layout
         if plot_metric:
             groups = {'Precision@K': ['Precision@5', 'Precision@10'],
-                      'Recall@K': ['Recall@5', 'Recall@10']}
+                      'Recall@K': ['Recall@5', 'Recall@10'],
+                      'AUC': ['AUC']}
             plot_losses = PlotLosses(groups=groups)
 
         # Start Iteration
@@ -350,7 +382,7 @@ class bprH(object):
                         self.U[u, :-1] += self.gamma * (df_dUu - dR_dUu)
 
                         # NABLA V_i
-                        df_dbi = (1 - indicator_I) * sigmoid(- r_hat_uIK ) / indicator_len(I)
+                        df_dbi = (1 - indicator_I) * sigmoid(- r_hat_uIK) / indicator_len(I)
                         dR_dbi = (1 - indicator_I) * 2 * self.lambda_b * b_I / indicator_len(I)
                         df_dVi = df_dbi * U_u
                         dR_dVi = 2 * self.lambda_v * V_bar_I / indicator_len(I)
@@ -375,14 +407,16 @@ class bprH(object):
                     else:
                         # when J is not empty
                         # NABLA U_u
-                        df_dUu = (1 - indicator_I) * sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u * (V_bar_I - V_bar_J) + \
+                        df_dUu = (1 - indicator_I) * sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u * (
+                                V_bar_I - V_bar_J) + \
                                  (1 - indicator_K) * sigmoid(- r_hat_uJK) * (V_bar_J - V_bar_K)
                         dR_dUu = 2 * self.lambda_u * U_u
                         # update U_u = U_u + gamma * (df_dUu - dR_dUu)
                         self.U[u, :-1] += self.gamma * (df_dUu - dR_dUu)
 
                         # NABLA V_i
-                        df_dbi = (1 - indicator_I) * sigmoid(- r_hat_uIJ / spec_alpha_u) / (indicator_len(I) * spec_alpha_u)
+                        df_dbi = (1 - indicator_I) * sigmoid(- r_hat_uIJ / spec_alpha_u) / (
+                                indicator_len(I) * spec_alpha_u)
                         dR_dbi = (1 - indicator_I) * 2 * self.lambda_b * b_I / indicator_len(I)
                         df_dVi = df_dbi * U_u
                         dR_dVi = 2 * self.lambda_v * V_bar_I / indicator_len(I)
@@ -393,7 +427,7 @@ class bprH(object):
 
                         # NABLA V_j
                         df_dbj = (1 - indicator_I) * (- sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u +
-                                                                          (1 - indicator_K) * sigmoid(- r_hat_uJK)) / indicator_len(J)
+                                                      (1 - indicator_K) * sigmoid(- r_hat_uJK)) / indicator_len(J)
                         dR_dbj = 2 * self.lambda_b * b_J / indicator_len(J)
                         df_dVj = df_dbj * U_u
                         dR_dVj = 2 * self.lambda_v * V_bar_J / indicator_len(J)
@@ -434,8 +468,12 @@ class bprH(object):
                 # update estimation
                 self.estimation = cupy.dot(self.U, self.V)
 
-                # we only calculate metric when the num of iter % 100 == 0
-                if index % iter_to_log == 0:
+                # we only save model to file when the num of iter % iter_to_save == 0
+                if (index + 1) % iter_to_save == 0:
+                    self.save(model_path=model_saved_path + "_" + str(index))
+
+                # we only calculate metric when the num of iter % iter_to_log == 0
+                if (index + 1) % iter_to_log == 0:
                     if log_metric | plot_metric:
                         # calculate metrics on test data
                         user_to_eval = sorted(set(self.test_data.UserID))
@@ -448,13 +486,15 @@ class bprH(object):
                                                                                    K=10,
                                                                                    train_data_as_reference_flag=True)
                     if log_metric:
-                        self.eval_hist.append([index, precision_5, precision_10, recall_5, recall_10])
+                        self.eval_hist.append([index, precision_5, precision_10, recall_5, recall_10, avg_auc])
+
                     if plot_metric:
                         plot_losses.update({
                             'Precision@5': precision_5,
                             'Precision@10': precision_10,
                             'Recall@5': recall_5,
-                            'Recall@10': recall_10
+                            'Recall@10': recall_10,
+                            'AUC': avg_auc
                         })
                         plot_losses.send()
 
@@ -480,15 +520,30 @@ class bprH(object):
         if user_to_recommend is None:
             user_to_recommend = self.user_list
 
+        # In order to address the case when a user is in test but not in train
+        # we build Popularity based ranking
+        user_in_train = set(self.train_data.UserID)
+
+        ranking_list = self.train_data.groupby("ItemID").count().UserID.copy()
+        ranking_list.sort_values(inplace=True, ascending=False)
+        ranking_list = ranking_list.index.to_list()
+
         # build the rec list for users
         user_rec_dict = dict()
 
         # print("Build User's Purchased Item Dict & Rec List")
         # user_set_bar = tqdm(user_to_recommend)
         for u in user_to_recommend:
-            user_rec_dict[u] = set()
+
+            # if user u is in test data but not in train?
+            # we use Popularity based ranking
+            if u not in user_in_train:
+                user_rec_dict[u] = set(ranking_list[:K])
+                continue
             est_pref_of_u = self.estimation[u, :]
+            # Next is the case when user u is in train data
             # get the ranking for user u's pref of item
+            user_rec_dict[u] = set()
             est_pref_sort_index = est_pref_of_u.argsort()[::-1].get()
             rec_item_cnt = 0
             # case of recommending on test data
@@ -526,30 +581,28 @@ class bprH(object):
         # clean ground truth
         ground_truth_cleaned = ground_truth[ground_truth.Action == 'P']
         # build two sets with users for AUC
-        #if (self.I_test_u is None) | (self.I_test_u_not is None):
-        #    self.I_test_u = dict()
-        #    self.I_test_u_not = dict()
-        #    for u in user_to_eval:
-        #        self.I_test_u[u] = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
-        #        self.I_test_u_not[u] = set(self.item_list) - self.I_test_u[u]
+        if len(self.I_u_t_test) == 0:
+            for u in user_to_eval:
+                self.I_u_t_test[u] = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
 
         # begin iteration
         for u in user_to_eval:
             rec_list_for_user_u = user_rec_dict[u]
             # get precision and recall
             I_u_t = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
+            #precision_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / min(K, len(I_u_t))
             precision_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / K
             recall_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / len(
                 I_u_t) if len(I_u_t) != 0 else np.nan
             # get auc
-            # est_pref_of_u = self.estimation[u, :].get()
+            est_pref_of_u = self.estimation[u, :].get()
             E_u = 0
             indicator_cnt = 0
-            # for i in self.I_test_u:
-            #    for j in self.I_test_u_not:
-            #        E_u += 1
-            #        if est_pref_of_u[i] > est_pref_of_u[j]:
-            #            indicator_cnt += 1
+            for i in self.I_u_t_test[u]:
+                for j in set(self.item_list) - self.I_u_t_test[u].union(self.I_u_t[u]):
+                    E_u += 1
+                    if est_pref_of_u[i] > est_pref_of_u[j]:
+                        indicator_cnt += 1
             auc_for_u = indicator_cnt / E_u if E_u != 0 else 0
             scoring_list.append([u, precision_K_for_u, recall_K_for_u, auc_for_u])
         # scoring_list = pd.DataFrame(scoring_list, columns=['UserID', 'Precision@' + str(K), 'Recall@' + str(K)])
