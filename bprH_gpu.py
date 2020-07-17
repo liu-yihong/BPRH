@@ -99,6 +99,12 @@ class bprH(object):
 
         self.existed_model_path = existed_model_path
 
+        if self.existed_model_path is not None:
+            f = open(self.existed_model_path, 'rb')
+            tmp_dict = pickle.load(f)
+            f.close()
+            self.__dict__.update(tmp_dict)
+
     def load(self, model_path):
         f = open(model_path, 'rb')
         tmp_dict = pickle.load(f)
@@ -260,10 +266,6 @@ class bprH(object):
         else:
             # if model_load_path provided, we load model parameter and retraining
             new_num_iter = self.num_iter
-            f = open(self.existed_model_path, 'rb')
-            tmp_dict = pickle.load(f)
-            f.close()
-            self.__dict__.update(tmp_dict)
             setattr(self, "num_iter", new_num_iter)
 
         # Configure loss plots layout
@@ -275,6 +277,7 @@ class bprH(object):
 
         # Start Iteration
         all_item = set(self.item_list)
+        user_in_train = sorted(set(self.train_data.UserID))
         print("Start Training")
         with trange(self.num_iter) as t:
             for index in t:
@@ -283,7 +286,7 @@ class bprH(object):
 
                 # Build u, I, J, K
                 # uniformly sample a user from U
-                u = choice(sorted(set(self.train_data.UserID)))
+                u = choice(user_in_train)
 
                 # build I
                 # uniformly sample a item i from I_u_t
@@ -513,33 +516,40 @@ class bprH(object):
             return cupy.dot(self.U[adv_index(self.user_original_id_list, user_to_predict), :],
                             self.V[:, adv_index(self.item_original_id_list, item_to_predict)])
 
-    def recommend(self, user_to_recommend=None, K=5, train_data_as_reference_flag=True):
+    def recommend(self, user_to_recommend=None, K=5,
+                  train_data_as_reference_flag=True,
+                  ignore_user_not_in_train=False):
         if self.train_data is None:
             print("Train data has not been feed")
             return None
         if user_to_recommend is None:
             user_to_recommend = self.user_list
 
-        # In order to address the case when a user is in test but not in train
-        # we build Popularity based ranking
         user_in_train = set(self.train_data.UserID)
+        if not ignore_user_not_in_train:
+            # In order to address the case when a user is in test but not in train
+            # we build Popularity based ranking
 
-        ranking_list = self.train_data.groupby("ItemID").count().UserID.copy()
-        ranking_list.sort_values(inplace=True, ascending=False)
-        ranking_list = ranking_list.index.to_list()
+            ranking_list = self.train_data.groupby("ItemID").count().UserID.copy()
+            ranking_list.sort_values(inplace=True, ascending=False)
+            ranking_list = ranking_list.index.to_list()
 
         # build the rec list for users
         user_rec_dict = dict()
 
-        # print("Build User's Purchased Item Dict & Rec List")
-        # user_set_bar = tqdm(user_to_recommend)
         for u in user_to_recommend:
 
-            # if user u is in test data but not in train?
-            # we use Popularity based ranking
+            # what if user u is in test data but not in train?
             if u not in user_in_train:
-                user_rec_dict[u] = set(ranking_list[:K])
-                continue
+                if ignore_user_not_in_train:
+                    # if we ignore this user, then we skip it
+                    continue
+                else:
+                    # otherwise, we use Popularity based ranking for this user
+                    if u not in user_in_train:
+                        user_rec_dict[u] = set(ranking_list[:K])
+                        continue
+
             est_pref_of_u = self.estimation[u, :]
             # Next is the case when user u is in train data
             # get the ranking for user u's pref of item
@@ -551,6 +561,7 @@ class bprH(object):
                 for item_id in est_pref_sort_index:
                     if rec_item_cnt == K:
                         break
+                    # we only consider the item that is not in train data for user u
                     if item_id not in self.I_u_t[u]:
                         user_rec_dict[u].add(item_id)
                         rec_item_cnt += 1
@@ -560,7 +571,12 @@ class bprH(object):
 
         return user_rec_dict
 
-    def scoring(self, ground_truth, K=5, user_to_eval=None, y=None, train_data_as_reference_flag=True):
+    def scoring(self, ground_truth, K=5,
+                user_to_eval=None, y=None,
+                train_data_as_reference_flag=True,
+                ignore_user_not_in_train=False,
+                use_min_of_K_and_size_of_groundtruth=False
+                ):
         """
 
         :param user_to_eval: user list to evaluate performance
@@ -576,30 +592,46 @@ class bprH(object):
         # get top K recommendation list
         user_rec_dict = self.recommend(user_to_recommend=user_to_eval,
                                        K=K,
-                                       train_data_as_reference_flag=train_data_as_reference_flag)
+                                       train_data_as_reference_flag=train_data_as_reference_flag,
+                                       ignore_user_not_in_train=ignore_user_not_in_train)
         scoring_list = []
         # clean ground truth
         ground_truth_cleaned = ground_truth[ground_truth.Action == 'P']
+        # for AUC calculation under train or test
+        I_u_t_in_auc = None
         # build two sets with users for AUC
-        if len(self.I_u_t_test) == 0:
-            for u in user_to_eval:
-                self.I_u_t_test[u] = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
-
+        # TODO: what if grount_truth comes from train
+        if train_data_as_reference_flag:
+            if len(self.I_u_t_test) == 0:
+                for u in user_to_eval:
+                    self.I_u_t_test[u] = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
+            I_u_t_in_auc = self.I_u_t_test
+        else:
+            I_u_t_in_auc = self.I_u_t
         # begin iteration
         for u in user_to_eval:
+            u_in_train_or_not = (u in user_rec_dict.keys())
+            if ignore_user_not_in_train & (not u_in_train_or_not):
+                # CASE: user not in train and we ignore it
+                continue
+            # Otherwise, we continue
             rec_list_for_user_u = user_rec_dict[u]
             # get precision and recall
             I_u_t = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
-            #precision_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / min(K, len(I_u_t))
-            precision_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / K
+            # what if the ground truth size for user u is smaller than K
+            if use_min_of_K_and_size_of_groundtruth:
+                precision_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / min(K, len(I_u_t))
+            else:
+                precision_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / K
+
             recall_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / len(
                 I_u_t) if len(I_u_t) != 0 else np.nan
             # get auc
             est_pref_of_u = self.estimation[u, :].get()
             E_u = 0
             indicator_cnt = 0
-            for i in self.I_u_t_test[u]:
-                for j in set(self.item_list) - self.I_u_t_test[u].union(self.I_u_t[u]):
+            for i in I_u_t_in_auc[u]:
+                for j in set(self.item_list) - I_u_t_in_auc[u].union(self.I_u_t[u]):
                     E_u += 1
                     if est_pref_of_u[i] > est_pref_of_u[j]:
                         indicator_cnt += 1
