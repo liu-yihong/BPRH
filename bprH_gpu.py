@@ -15,8 +15,6 @@ from livelossplot import PlotLosses
 from numba import jit
 
 
-# TODO: update save module
-# TODO: implement update training module
 def adv_index(list_to_index, list_to_match):
     return [ind for ind, match in enumerate(list_to_index) if match in list_to_match]
 
@@ -90,8 +88,8 @@ class bprH(object):
         self.train_data = None
         self.test_data = None
 
-        self.I_u_t = dict()
-        self.I_u_a = dict()
+        self.I_u_t_train = dict()
+        self.I_u_a_train = dict()
 
         self.I_u_t_test = dict()
 
@@ -99,11 +97,14 @@ class bprH(object):
 
         self.existed_model_path = existed_model_path
 
-        if self.existed_model_path is not None:
+        if existed_model_path is not None:
+            print("Loading Pre-trianed Model")
             f = open(self.existed_model_path, 'rb')
             tmp_dict = pickle.load(f)
             f.close()
             self.__dict__.update(tmp_dict)
+            setattr(self, "existed_model_path", existed_model_path)
+            setattr(self, "num_iter", num_iter)
 
     def load(self, model_path):
         f = open(model_path, 'rb')
@@ -132,17 +133,19 @@ class bprH(object):
         user_set_bar = tqdm(self.user_list)
         for u in user_set_bar:
             alpha_u[u] = dict()
-            I_t_u = self.I_u_t[u]
+            I_t_u = self.I_u_t_train[u]
             # Notice we only have View action so we do not need filtered item set
             for x in auxiliary_action:
-                I_a_u = self.I_u_a[u]
+                I_a_u = self.I_u_a_train[u]
                 # Equation Reference to page 86 section 3.3
+                # NOTE
                 # if I_t_u is 0, then we set C_u_at to be 0
                 # if I_a_u is 0, then we set C_u_ta to be 0
                 C_u_at = len(I_t_u.intersection(I_a_u)) / len(I_t_u) if len(I_t_u) != 0 else 0
                 C_u_ta = len(I_t_u.intersection(I_a_u)) / len(I_a_u) if len(I_a_u) != 0 else 0
                 # if C_u_ta + C_u_at == 0, then we set alpha_u of user u to be 1
                 # hence, C_u_X here is 1 / omega because alpha_u = omega * C_u_X
+                # in this case, user u is not in train, perhaps in test
                 C_u_X = 2 * C_u_at * C_u_ta / (C_u_ta + C_u_at) if C_u_ta + C_u_at != 0 else (1 / self.omega)
                 # set final alpha_u to 1 if C_u_ta + C_u_at == 0
                 alpha_u[u][x] = C_u_X
@@ -158,12 +161,11 @@ class bprH(object):
         # alpha_u.columns = ['UserID', 'V', 'alpha']
         return alpha_u
 
-    def itemset_coselection(self, saved_path, X, y=None):
+    def itemset_coselection(self, X, y=None):
         """
 
         :param X: trained data
         :param y: ignore
-        :param saved_path: saved path of coselection dictionary index by user
         :return: co-selection dictionary
         """
 
@@ -180,28 +182,30 @@ class bprH(object):
         item_set_bar = tqdm(self.item_list)
         for i in item_set_bar:
             S[i] = set()
-            # overcome the cases when U[i] = 1
+            # NOTE: overcome the cases when U[i] = 1
             S[i].add(i)
             for j in self.item_list:
-                # If more than 2 users have target action on i and j, then j is included in S[i]
+                # If more than 2 users have target action on i and j, then j is added in S[i]
                 if len(U[i].intersection(U[j])) >= 2:
                     S[i].add(j)
         # save coselection list
-        with open(saved_path, 'wb') as f:
-            pickle.dump(S, f, pickle.HIGHEST_PROTOCOL)
-
+        #with open(saved_path, 'wb') as f:
+        #    pickle.dump(S, f, pickle.HIGHEST_PROTOCOL)
         return S
 
     def build_itemset_for_user(self):
         print("Build I_u_t, I_u_a")
         user_set_bar = tqdm(self.user_list)
         for u in user_set_bar:
-            self.I_u_t[u] = set(self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
+            self.I_u_t_train[u] = set(
+                self.train_data[(self.train_data.UserID == u) & (self.train_data.Action == 'P')].ItemID)
+            self.I_u_t_test[u] = set(
+                self.test_data[(self.test_data.UserID == u) & (self.test_data.Action == 'P')].ItemID)
             # here we only have one auxiliary action 'V'
-            self.I_u_a[u] = set(self.train_data[(self.train_data.UserID == u) & (
+            self.I_u_a_train[u] = set(self.train_data[(self.train_data.UserID == u) & (
                     self.train_data.Action == 'V')].ItemID)
 
-    def fit(self, X, eval_X, original_item_list, original_user_list, y=None,
+    def fit(self, X, eval_X, y=None,
             model_saved_path='bprh_model.pkl',
             iter_to_save=5000,
             coselection_saved_path='data/item-set-coselection.pkl', iter_to_log=100,
@@ -212,8 +216,8 @@ class bprH(object):
             # we transform user and item's string ID to int ID so that their ID is their index in U and V
             print("Registering Model Parameters")
             # rename user and item
-            self.user_original_id_list = sorted(set(original_user_list))
-            self.item_original_id_list = sorted(set(original_item_list))
+            self.user_original_id_list = sorted(set(X.UserID).union(set(eval_X.UserID)))
+            self.item_original_id_list = sorted(set(X.ItemID).union(set(eval_X.ItemID)))
 
             self.train_data = X.copy()
             self.test_data = eval_X.copy()
@@ -224,8 +228,8 @@ class bprH(object):
             self.test_data.UserID = self.test_data.UserID.apply(lambda x: self.user_original_id_list.index(x))
             self.test_data.ItemID = self.test_data.ItemID.apply(lambda x: self.item_original_id_list.index(x))
 
-            self.item_list = sorted(set([idx[0] for idx in enumerate(self.item_original_id_list)]))
-            self.user_list = sorted(set([idx[0] for idx in enumerate(self.user_original_id_list)]))
+            self.item_list = [idx[0] for idx in enumerate(self.item_original_id_list)]
+            self.user_list = [idx[0] for idx in enumerate(self.user_original_id_list)]
 
             self.num_u = len(self.user_list)
             self.num_i = len(self.item_list)
@@ -237,7 +241,7 @@ class bprH(object):
             if correlation:
                 self.alpha_u = self.auxiliary_target_correlation(X=self.train_data)
             else:
-                print("Calculate auxiliary-target correlation")
+                print("No auxiliary-target correlation - all alpha_u equal to one")
                 alpha_u_all_ones = dict()
                 user_set_bar = tqdm(self.user_list)
                 for u in user_set_bar:
@@ -247,7 +251,7 @@ class bprH(object):
 
             # Generate item-set based on co-selection
             if coselection:
-                self.S = self.itemset_coselection(X=self.train_data, saved_path=coselection_saved_path)
+                self.S = self.itemset_coselection(X=self.train_data)
 
             # Initialization of User and Item Matrices
             if self.random_state is not None:
@@ -256,17 +260,14 @@ class bprH(object):
                 cupy.random.seed(0)
 
             print("Initializing User and Item Matrices")
-            self.U = cupy.random.normal(size=(self.num_u, self.dim + 1))
-            self.V = cupy.random.normal(size=(self.dim + 1, self.num_i))
+            # NOTE: Initialization is influenced by mean and std
+            self.U = cupy.random.normal(size=(self.num_u, self.dim + 1), loc=0.0, scale=0.1)
+            self.V = cupy.random.normal(size=(self.dim + 1, self.num_i), loc=0.0, scale=0.1)
             # self.U = cupy.zeros(shape=(self.num_u, self.dim + 1))
             # self.V = cupy.zeros(shape=(self.dim + 1, self.num_i))
             self.U[:, -1] = 1.0
             # estimation is U dot V
             self.estimation = cupy.dot(self.U, self.V)
-        else:
-            # if model_load_path provided, we load model parameter and retraining
-            new_num_iter = self.num_iter
-            setattr(self, "num_iter", new_num_iter)
 
         # Configure loss plots layout
         if plot_metric:
@@ -290,7 +291,7 @@ class bprH(object):
 
                 # build I
                 # uniformly sample a item i from I_u_t
-                I_u_t = self.I_u_t[u]
+                I_u_t = self.I_u_t_train[u]
                 if len(I_u_t) != 0:
                     i = choice(sorted(I_u_t))
                     # build I = I_u_t cap S_i
@@ -305,10 +306,11 @@ class bprH(object):
                     I = set()
 
                 # build J, since we only have one auxiliary action, we follow the uniform sampling
-                I_u_oa = self.I_u_a[u] - I_u_t
+                I_u_oa = self.I_u_a_train[u] - I_u_t
                 if len(I_u_oa) != 0:
                     j = choice(sorted(I_u_oa))
                     if coselection:
+                        # NOTE: typo in paper?
                         J = I_u_oa.intersection(self.S[j])
                     else:
                         # if no coselection, we set J as the set of only-auxiliary items by user u
@@ -324,6 +326,7 @@ class bprH(object):
                     k = choice(sorted(I_u_n))
                     # build K
                     if coselection:
+                        # NOTE: typo in paper?
                         K = I_u_n.intersection(self.S[k])
                     else:
                         # if no coselection, we set K as the set of no-action items by user u
@@ -338,7 +341,7 @@ class bprH(object):
                 spec_alpha_u = self.alpha_u[u]['alpha']
 
                 U_u = self.U[u, :-1].copy()
-                # get r_hat_uIJ and r_hat_uJK
+                # get r_hat_uIJ, r_hat_uJK, r_hat_uIK
                 r_hat_uI = cupy.average(self.estimation[u, sorted(I)]) if len(
                     I) != 0 else cupy.array([0])
                 r_hat_uJ = cupy.average(self.estimation[u, sorted(J)]) if len(
@@ -466,10 +469,11 @@ class bprH(object):
                 #                 b_K if len(K) != 0 else 0) ** 2)
                 # bprh_loss = f_Theta - regula
 
-                # estimation changed
-                est_changed = cupy.linalg.norm(cupy.dot(self.U, self.V) - self.estimation)
                 # update estimation
+                old_estimation = self.estimation.copy()
                 self.estimation = cupy.dot(self.U, self.V)
+                # estimation changed
+                est_changed = cupy.linalg.norm(self.estimation - old_estimation)
 
                 # we only save model to file when the num of iter % iter_to_save == 0
                 if (index + 1) % iter_to_save == 0:
@@ -562,7 +566,7 @@ class bprH(object):
                     if rec_item_cnt == K:
                         break
                     # we only consider the item that is not in train data for user u
-                    if item_id not in self.I_u_t[u]:
+                    if item_id not in self.I_u_t_train[u]:
                         user_rec_dict[u].add(item_id)
                         rec_item_cnt += 1
             # case of recommending on train data
@@ -579,6 +583,9 @@ class bprH(object):
                 ):
         """
 
+        :param train_data_as_reference_flag:
+        :param ignore_user_not_in_train:
+        :param use_min_of_K_and_size_of_groundtruth:
         :param user_to_eval: user list to evaluate performance
         :param ground_truth: ground truth of user browsing behavior
         :param K: top K items to recommend
@@ -600,14 +607,15 @@ class bprH(object):
         # for AUC calculation under train or test
         I_u_t_in_auc = None
         # build two sets with users for AUC
-        # TODO: what if grount_truth comes from train
+        #
+        # what if grount_truth comes from train
         if train_data_as_reference_flag:
             if len(self.I_u_t_test) == 0:
                 for u in user_to_eval:
                     self.I_u_t_test[u] = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
             I_u_t_in_auc = self.I_u_t_test
         else:
-            I_u_t_in_auc = self.I_u_t
+            I_u_t_in_auc = self.I_u_t_train
         # begin iteration
         for u in user_to_eval:
             u_in_train_or_not = (u in user_rec_dict.keys())
@@ -631,7 +639,7 @@ class bprH(object):
             E_u = 0
             indicator_cnt = 0
             for i in I_u_t_in_auc[u]:
-                for j in set(self.item_list) - I_u_t_in_auc[u].union(self.I_u_t[u]):
+                for j in set(self.item_list) - I_u_t_in_auc[u].union(self.I_u_t_train[u]):
                     E_u += 1
                     if est_pref_of_u[i] > est_pref_of_u[j]:
                         indicator_cnt += 1
