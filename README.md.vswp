@@ -24,13 +24,16 @@ Since repeated vector and matrix manipulations are involved in BPRH model. [bprH
 
 ## Implementation Detail
 
-This section includes the iplementation details unmetioned in [Qiu, Huihuai, et al. "BPRH: Bayesian personalized ranking for heterogeneous implicit feedback" Information Sciences 453 (2018): 80-98](https://www.sciencedirect.com/science/article/pii/S0020025516315742).
+This section includes the implementation details unmetioned in [Qiu, Huihuai, et al. "BPRH: Bayesian personalized ranking for heterogeneous implicit feedback" Information Sciences 453 (2018): 80-98](https://www.sciencedirect.com/science/article/pii/S0020025516315742).
 
-1. There are nine types of action in the original Sobazaar dataset. We group 
+1. There are nine types of action in the original Sobazaar dataset. We group 'purchase:buy_clicked' as Purchase, 'content:interact:product_clicked', 'content:interact:product_detail_viewed', 'product_detail_clicked' as View, and 'content:interact:product_wanted', 'product_wanted' as Like. Then we can get 4712 users and 7015 items with 15208 purchases, 126846 views, and 96689 likes. This is aligned to Table 4 in [Qiu, Huihuai, et al. "BPRH: Bayesian personalized ranking for heterogeneous implicit feedback" Information Sciences 453 (2018): 80-98](https://www.sciencedirect.com/science/article/pii/S0020025516315742).
+2. For [auxiliary and target actions correlation](https://github.com/liu-yihong/BPRH/blob/f8f74de1bd97783f7d5274d05096cbfc96fc0136/bprH_gpu.py#L108), we only consider the case of View with Purchase. Hence, $\rho$
 
 
 ## Mathematical Detail
 
 For mathematical details, please visit [my blogs](https://liu-yihong.github.io/2020/06/26/Understanding-BPR-COFISET-and-BPRH/).
 
-Please cite this repository if you use my codes.
+## Copyright
+
+This repository is under [MIT License](https://github.com/liu-yihong/BPRH/blob/master/LICENSE). Please cite this repository if you use my codes.
