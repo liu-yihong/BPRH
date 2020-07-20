@@ -3,7 +3,8 @@ Implementation for Qiu, Huihuai, et al.
 "BPRH: Bayesian personalized ranking for heterogeneous implicit feedback." Information Sciences 453 (2018): 80-98.
 
 Author: Yihong Liu
-For more details, please visit https://liu-yihong.github.io/2020/06/26/Understanding-BPR-COFISET-and-BPRH/
+Github Repository: https://github.com/liu-yihong/BPRH
+For mathematical details, please visit https://liu-yihong.github.io/2020/06/26/Understanding-BPR-COFISET-and-BPRH/
 '''
 import pickle
 import numpy as np
