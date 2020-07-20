@@ -6,13 +6,11 @@ Author: Yihong Liu
 For more details, please visit https://liu-yihong.github.io/2020/06/26/Understanding-BPR-COFISET-and-BPRH/
 '''
 import pickle
-import pandas as pd
 import numpy as np
 import cupy
 from random import choice
 from tqdm import tqdm, trange
 from livelossplot import PlotLosses
-from numba import jit
 
 
 def adv_index(list_to_index, list_to_match):
@@ -29,18 +27,6 @@ def indicator(z):
 
 def indicator_len(z):
     return len(z) if len(z) != 0 else 1
-
-
-def load_model(load_path):
-    with open(load_path, 'rb') as model_input:
-        model_instance = pickle.load(model_input)
-    return model_instance
-
-
-def save_model(model_instance, saved_path):
-    with open(saved_path + '/model.pkl', 'wb') as model_output:
-        pickle.dump(model_instance, model_output, pickle.HIGHEST_PROTOCOL)
-    return None
 
 
 class bprH(object):
@@ -189,7 +175,7 @@ class bprH(object):
                 if len(U[i].intersection(U[j])) >= 2:
                     S[i].add(j)
         # save coselection list
-        #with open(saved_path, 'wb') as f:
+        # with open(saved_path, 'wb') as f:
         #    pickle.dump(S, f, pickle.HIGHEST_PROTOCOL)
         return S
 
