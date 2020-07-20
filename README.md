@@ -9,13 +9,13 @@ The codes are programmed and tested on python 3.7.6. And they should also run on
 [bprH.py](https://github.com/liu-yihong/BPRH/blob/master/bprH.py) is the basic model wrapped in class for convenient usage. Packages below are required to run [bprH.py](https://github.com/liu-yihong/BPRH/blob/master/bprH.py)
 - pickle
 - random
-- numpy
-- pandas
-- tqdm
-- livelossplot
-- scikit-learn
+- numpy==1.18.1
+- pandas==1.0.1
+- tqdm==4.42.1
+- livelossplot==0.5.1
+- scikit-learn==0.22.1
 
-Since repeated vector and matrix manipulations are involved in BPRH model. [bprH_gpu.py](https://github.com/liu-yihong/BPRH/blob/master/bprH_gpu.py)  leverage the power of NVIDIA GPU for acceleration. Package [CuPy](https://cupy.dev/) is required to run [bprH_gpu.py](https://github.com/liu-yihong/BPRH/blob/master/bprH_gpu.py). You may check [CuPy Installation Guide](https://docs.cupy.dev/en/stable/install.html) for installation help.
+Since repeated vector and matrix manipulations are involved in BPRH model. [bprH_gpu.py](https://github.com/liu-yihong/BPRH/blob/master/bprH_gpu.py)  leverage the power of NVIDIA GPU for acceleration. Package [CuPy](https://cupy.dev/) is required to run [bprH_gpu.py](https://github.com/liu-yihong/BPRH/blob/master/bprH_gpu.py). You may check [CuPy Installation Guide](https://docs.cupy.dev/en/stable/install.html) for installation help. The version we used is cupy-cuda101==7.3.0 and CUDA 10.1.
 
 [Sobazaar_cleaning.ipynb](https://github.com/liu-yihong/BPRH/blob/master/Sobazaar_cleaning.ipynb) is the Jupyter Notebook that cleans the raw Sobazaar data "[Sobazaar-hashID.csv.gz](https://github.com/liu-yihong/BPRH/blob/master/data/Sobazaar-hashID.csv.gz)" located in [data](https://github.com/liu-yihong/BPRH/tree/master/data) folder. You may unzip it manually before execute [Sobazaar_cleaning.ipynb](https://github.com/liu-yihong/BPRH/blob/master/Sobazaar_cleaning.ipynb). Notice that we do not consider Like action and only View action will get processed in [bprH_gpu.py](https://github.com/liu-yihong/BPRH/blob/master/bprH_gpu.py) and [bprH.py](https://github.com/liu-yihong/BPRH/blob/master/bprH.py). 
 
@@ -40,4 +40,4 @@ For mathematical details, please visit [my blogs](https://liu-yihong.github.io/2
 
 ## Copyright
 
-This repository is under [MIT License](https://github.com/liu-yihong/BPRH/blob/master/LICENSE). Please cite this repository if you use my codes.
+This repository is under [MIT License](https://github.com/liu-yihong/BPRH/blob/master/LICENSE). Please cite this repository if you use our codes.
