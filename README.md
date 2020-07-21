@@ -19,7 +19,7 @@ Since repeated vector and matrix manipulations are involved in BPRH model. [bprH
 
 [Sobazaar_cleaning.ipynb](https://github.com/liu-yihong/BPRH/blob/master/Sobazaar_cleaning.ipynb) is the Jupyter Notebook that cleans the raw Sobazaar data "[Sobazaar-hashID.csv.gz](https://github.com/liu-yihong/BPRH/blob/master/data/Sobazaar-hashID.csv.gz)" located in [data](https://github.com/liu-yihong/BPRH/tree/master/data) folder. You may unzip it manually before execute [Sobazaar_cleaning.ipynb](https://github.com/liu-yihong/BPRH/blob/master/Sobazaar_cleaning.ipynb). Notice that we do not consider Like action and only View action will get processed in [bprH_gpu.py](https://github.com/liu-yihong/BPRH/blob/master/bprH_gpu.py) and [bprH.py](https://github.com/liu-yihong/BPRH/blob/master/bprH.py). 
 
-[BRPH_test_0718_filtered5.ipynb](https://github.com/liu-yihong/BPRH/blob/master/BRPH_test_0718_filtered5.ipynb) illustrate the usage and training process of BPRH on GPU. In this experiment, we only focus on users who purchased more than 5 items.
+[BRPH_test_0718-filtered2-straitified.ipynb](https://github.com/liu-yihong/BPRH/blob/master/BRPH_test_0718-filtered2-straitified.ipynb) illustrate the usage and training process of BPRH on GPU. In this experiment, we only focus on users who purchased more than 2 items. Train and test splits are straitified on User ID. [BRPH_test_0719_nofiltered_0.1.ipynb](https://github.com/liu-yihong/BPRH/blob/master/BRPH_test_0719_nofiltered_0.1.ipynb) use all parts of the data, including users with only one purchase.
 
 ## Implementation Detail
 
