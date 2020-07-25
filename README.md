@@ -19,7 +19,25 @@ Since repeated vector and matrix manipulations are involved in BPRH model. [bprH
 
 [Sobazaar_cleaning.ipynb](https://github.com/liu-yihong/BPRH/blob/master/Sobazaar_cleaning.ipynb) is the Jupyter Notebook that cleans the raw Sobazaar data "[Sobazaar-hashID.csv.gz](https://github.com/liu-yihong/BPRH/blob/master/data/Sobazaar-hashID.csv.gz)" located in [data](https://github.com/liu-yihong/BPRH/tree/master/data) folder. You may unzip it manually before execute [Sobazaar_cleaning.ipynb](https://github.com/liu-yihong/BPRH/blob/master/Sobazaar_cleaning.ipynb). Notice that we do not consider Like action and only View action will get processed in [bprH_gpu.py](https://github.com/liu-yihong/BPRH/blob/master/bprH_gpu.py) and [bprH.py](https://github.com/liu-yihong/BPRH/blob/master/bprH.py). 
 
-[BRPH_test_0718-filtered2-straitified.ipynb](https://github.com/liu-yihong/BPRH/blob/master/BRPH_test_0718-filtered2-straitified.ipynb) illustrate the usage and training process of BPRH on GPU. In this experiment, we only focus on users who purchased more than 2 items. Train and test splits are straitified on User ID. [BRPH_test_0719_nofiltered_0.1.ipynb](https://github.com/liu-yihong/BPRH/blob/master/BRPH_test_0719_nofiltered_0.1.ipynb) use all parts of the data, including users with only one purchase.
+[BRPH_50_1000_0.00001_0.1_0.1.ipynb](https://github.com/liu-yihong/BPRH/blob/master/BRPH_50_1000_0.00001_0.1_0.1.ipynb) illustrate the usage and training process of BPRH on GPU.
+
+## Parameters Sensitivity Analysis
+
+| gamma | lambda_u, lambda_v | lambda_b |  P@5  |  P@10 |  R@5  |  R@10 |  AUC  |
+| :-------: | :-----------------------: | :----------: | :-----: | :-----: | :-----: | :-----: | :-----: |
+|    0.1    |        0.00001         |  0.00001  | 0.014 | 0.011 | 0.061 | 0.091 | 0.857 |
+|    0.1    |        0.00001         |   0.0001   | 0.014 | 0.011 | 0.062 | 0.094 | 0.858 |
+|    0.1    |        0.00001         |   0.001    | 0.018 | 0.013 | 0.075 | 0.105 | 0.861 |
+|    0.1    |        0.00001         |    0.01     | 0.033 | 0.021 | 0.146 | 0.175 | 0.866 |
+|    0.1    |        0.00001         |     0.1     | 0.054 | 0.034 | 0.227 | 0.281 | 0.885 |
+|    0.1    |         0.0001         |  0.00001  | 0.014 | 0.011 |  0.06 | 0.092 |  0.86 |
+|    0.1    |         0.0001         |   0.0001   | 0.015 | 0.011 | 0.064 | 0.091 | 0.856 |
+|    0.1    |         0.0001         |   0.001    | 0.016 | 0.012 | 0.071 | 0.106 |  0.86 |
+|    0.1    |          0.001          |  0.00001  | 0.013 |  0.01  | 0.054 | 0.087 | 0.858 |
+|    0.1    |          0.001          |   0.0001   | 0.014 | 0.011 | 0.058 | 0.089 | 0.859 |
+|    0.1    |          0.001          |   0.001    | 0.016 | 0.011 | 0.069 | 0.097 | 0.859 |
+
+We set the number of iterations as 720,000 in this analysis.
 
 ## Implementation Detail
 
