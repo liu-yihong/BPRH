@@ -3,8 +3,7 @@ Implementation for Qiu, Huihuai, et al.
 "BPRH: Bayesian personalized ranking for heterogeneous implicit feedback." Information Sciences 453 (2018): 80-98.
 
 Author: Yihong Liu
-Github Repository: https://github.com/liu-yihong/BPRH
-For mathematical details, please visit https://liu-yihong.github.io/2020/06/26/Understanding-BPR-COFISET-and-BPRH/
+For more details, please visit https://liu-yihong.github.io/2020/06/26/Understanding-BPR-COFISET-and-BPRH/
 '''
 import pickle
 import numpy as np
@@ -71,6 +70,7 @@ class bprH(object):
 
         self.alpha_u = None
         self.S = None
+        self.U_item = None
 
         self.train_data = None
         self.test_data = None
@@ -158,6 +158,9 @@ class bprH(object):
 
         S = dict()
         U = dict()
+
+        S[None] = set()
+
         # first we build U_i for each item i
         print("Generate Itemset Coselection - Build U_i")
         item_set_bar = tqdm(self.item_list)
@@ -178,7 +181,7 @@ class bprH(object):
         # save coselection list
         # with open(saved_path, 'wb') as f:
         #    pickle.dump(S, f, pickle.HIGHEST_PROTOCOL)
-        return S
+        return S, U
 
     def build_itemset_for_user(self):
         print("Build I_u_t, I_u_a")
@@ -238,7 +241,7 @@ class bprH(object):
 
             # Generate item-set based on co-selection
             if coselection:
-                self.S = self.itemset_coselection(X=self.train_data)
+                self.S, self.U_item = self.itemset_coselection(X=self.train_data)
 
             # Initialization of User and Item Matrices
             if self.random_state is not None:
@@ -328,31 +331,35 @@ class bprH(object):
                 spec_alpha_u = self.alpha_u[u]['alpha']
 
                 U_u = self.U[u, :-1].copy()
+                sorted_I = sorted(I)
+                sorted_J = sorted(J)
+                sorted_K = sorted(K)
+
                 # get r_hat_uIJ, r_hat_uJK, r_hat_uIK
-                r_hat_uI = cupy.average(self.estimation[u, sorted(I)]) if len(
+                r_hat_uI = cupy.average(self.estimation[u, sorted_I]) if len(
                     I) != 0 else cupy.array([0])
-                r_hat_uJ = cupy.average(self.estimation[u, sorted(J)]) if len(
+                r_hat_uJ = cupy.average(self.estimation[u, sorted_J]) if len(
                     J) != 0 else cupy.array([0])
-                r_hat_uK = cupy.average(self.estimation[u, sorted(K)]) if len(
+                r_hat_uK = cupy.average(self.estimation[u, sorted_K]) if len(
                     K) != 0 else cupy.array([0])
 
                 r_hat_uIJ = r_hat_uI - r_hat_uJ
                 r_hat_uJK = r_hat_uJ - r_hat_uK
                 r_hat_uIK = r_hat_uI - r_hat_uK
                 # get V_bar_I, V_bar_J, V_bar_K
-                V_bar_I = cupy.average(self.V[:-1, sorted(I)], axis=1) if len(
+                V_bar_I = cupy.average(self.V[:-1, sorted_I], axis=1) if len(
                     I) != 0 else cupy.zeros(
                     shape=(self.dim,))
-                V_bar_J = cupy.average(self.V[:-1, sorted(J)], axis=1) if len(
+                V_bar_J = cupy.average(self.V[:-1, sorted_J], axis=1) if len(
                     J) != 0 else cupy.zeros(
                     shape=(self.dim,))
-                V_bar_K = cupy.average(self.V[:-1, sorted(K)], axis=1) if len(
+                V_bar_K = cupy.average(self.V[:-1, sorted_K], axis=1) if len(
                     K) != 0 else cupy.zeros(
                     shape=(self.dim,))
                 # get b_I, b_J, b_K
-                b_I = cupy.average(self.V[-1, sorted(I)]) if len(I) != 0 else cupy.array([0])
-                b_J = cupy.average(self.V[-1, sorted(J)]) if len(J) != 0 else cupy.array([0])
-                b_K = cupy.average(self.V[-1, sorted(K)]) if len(K) != 0 else cupy.array([0])
+                b_I = cupy.average(self.V[-1, sorted_I]) if len(I) != 0 else cupy.array([0])
+                b_J = cupy.average(self.V[-1, sorted_J]) if len(J) != 0 else cupy.array([0])
+                b_K = cupy.average(self.V[-1, sorted_K]) if len(K) != 0 else cupy.array([0])
 
                 # here we want to examine the condition of empty sets
                 indicator_I = indicator(len(I) == 0)
@@ -380,9 +387,9 @@ class bprH(object):
                         df_dVi = df_dbi * U_u
                         dR_dVi = 2 * self.lambda_v * V_bar_I / indicator_len(I)
                         # update V_i = V_i + gamma * (df_dVi - dR_dVi)
-                        self.V[:-1, sorted(I)] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
+                        self.V[:-1, sorted_I] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
                         # update b_i = b_i + gamma * (df_dbi - dR_dbi)
-                        self.V[-1, sorted(I)] += self.gamma * (df_dbi - dR_dbi)
+                        self.V[-1, sorted_I] += self.gamma * (df_dbi - dR_dbi)
 
                         # No change on J
 
@@ -393,9 +400,9 @@ class bprH(object):
                         dR_dVk = 2 * self.lambda_v * V_bar_K / indicator_len(K)
 
                         # update V_k = V_k + gamma * (df_dVk - dR_dVk)
-                        self.V[:-1, sorted(K)] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
+                        self.V[:-1, sorted_K] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
                         # update b_k = b_k + gamma * (df_dbk - dR_dbk)
-                        self.V[-1, sorted(K)] += self.gamma * (df_dbk - dR_dbk)
+                        self.V[-1, sorted_K] += self.gamma * (df_dbk - dR_dbk)
 
                     else:
                         # when J is not empty
@@ -414,9 +421,9 @@ class bprH(object):
                         df_dVi = df_dbi * U_u
                         dR_dVi = 2 * self.lambda_v * V_bar_I / indicator_len(I)
                         # update V_i = V_i + gamma * (df_dVi - dR_dVi)
-                        self.V[:-1, sorted(I)] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
+                        self.V[:-1, sorted_I] += self.gamma * (df_dVi - dR_dVi)[:, None]  # trick: transpose here
                         # update b_i = b_i + gamma * (df_dbi - dR_dbi)
-                        self.V[-1, sorted(I)] += self.gamma * (df_dbi - dR_dbi)
+                        self.V[-1, sorted_I] += self.gamma * (df_dbi - dR_dbi)
 
                         # NABLA V_j
                         df_dbj = (1 - indicator_I) * (- sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u +
@@ -426,9 +433,9 @@ class bprH(object):
                         dR_dVj = 2 * self.lambda_v * V_bar_J / indicator_len(J)
 
                         # update V_j = V_j + gamma * (df_dVj - dR_dVj)
-                        self.V[:-1, sorted(J)] += self.gamma * (df_dVj - dR_dVj)[:, None]  # trick: transpose here
+                        self.V[:-1, sorted_J] += self.gamma * (df_dVj - dR_dVj)[:, None]  # trick: transpose here
                         # update b_j = b_j + gamma * (df_dbj - dR_dbj)
-                        self.V[-1, sorted(J)] += self.gamma * (df_dbj - dR_dbj)
+                        self.V[-1, sorted_J] += self.gamma * (df_dbj - dR_dbj)
 
                         # NABLA V_k
                         df_dbk = (1 - indicator_K) * - sigmoid(- r_hat_uJK) / indicator_len(K)
@@ -437,9 +444,9 @@ class bprH(object):
                         dR_dVk = 2 * self.lambda_v * V_bar_K / indicator_len(K)
 
                         # update V_k = V_k + gamma * (df_dVk - dR_dVk)
-                        self.V[:-1, sorted(K)] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
+                        self.V[:-1, sorted_K] += self.gamma * (df_dVk - dR_dVk)[:, None]  # trick: transpose here
                         # update b_k = b_k + gamma * (df_dbk - dR_dbk)
-                        self.V[-1, sorted(K)] += self.gamma * (df_dbk - dR_dbk)
+                        self.V[-1, sorted_K] += self.gamma * (df_dbk - dR_dbk)
 
                 else:
                     # these are the cases when at least two sets are empty
@@ -458,7 +465,11 @@ class bprH(object):
 
                 # update estimation
                 old_estimation = self.estimation.copy()
-                self.estimation = cupy.dot(self.U, self.V)
+                # self.estimation = cupy.dot(self.U, self.V)
+                all_sampled_item = sorted(set.union(I, J, K))
+                # for sampled_item in all_sampled_item:
+                #    self.estimation[:, sampled_item] = cupy.dot(self.U, self.V[:, sampled_item])
+                self.estimation[:, all_sampled_item] = cupy.dot(self.U, self.V[:, all_sampled_item])
                 # estimation changed
                 est_changed = cupy.linalg.norm(self.estimation - old_estimation)
 
@@ -641,6 +652,85 @@ class bprH(object):
         recall_K = scoring_average[2]
         avg_auc = scoring_average[3]
         return scoring_list, precision_K, recall_K, avg_auc
+
+    def online_updating_user(self, new_user_with_data=None):
+        assert len(set(new_user_with_data.UserID)) == 1, "New User Data should only include one user."
+        new_user_with_data.drop_duplicates(inplace=True)
+
+        # check u in user_original_id_list or not (u exists or not)
+        u_original_id = set(new_user_with_data.UserID).pop()
+        if u_original_id not in self.user_original_id_list:
+            u_already_exist = False
+            self.user_original_id_list.append(u_original_id)
+            # convert u's string id to integer index id
+            u = self.user_original_id_list.index(u_original_id)
+            self.user_list.append(u)
+            self.num_u += 1
+        else:
+            u_already_exist = True
+            u = self.user_original_id_list.index(u_original_id)
+
+        # build I_u_t, I_u_a for user u
+        assert len(self.S) != 0 & len(self.U_item) != 0, "Item-set Coselection Not Initialized."
+        self.I_u_t_train[u] = self.I_u_t_train[u].union(set(new_user_with_data[new_user_with_data.Action == 'P'].ItemID)) if u_already_exist else set(new_user_with_data[new_user_with_data.Action == 'P'].ItemID)
+        self.I_u_a_train[u] = self.I_u_a_train[u].union(set(new_user_with_data[new_user_with_data.Action == 'V'].ItemID)) if u_already_exist else set(new_user_with_data[new_user_with_data.Action == 'V'].ItemID)
+
+        # calculate auxiliary-target correlation C
+        self.alpha_u[u] = dict()
+        I_t_u = self.I_u_t_train[u]
+        # Notice we only have View action so we do not need filtered item set
+        for x in ['V']:
+            I_a_u = self.I_u_a_train[u]
+            # Equation Reference to page 86 section 3.3
+            # NOTE
+            # if I_t_u is 0, then we set C_u_at to be 0
+            # if I_a_u is 0, then we set C_u_ta to be 0
+            C_u_at = len(I_t_u.intersection(I_a_u)) / len(I_t_u) if len(I_t_u) != 0 else 0
+            C_u_ta = len(I_t_u.intersection(I_a_u)) / len(I_a_u) if len(I_a_u) != 0 else 0
+            # if C_u_ta + C_u_at == 0, then we set alpha_u of user u to be 1
+            # hence, C_u_X here is 1 / omega because alpha_u = omega * C_u_X
+            # in this case, user u is not in train, perhaps in test
+            C_u_X = 2 * C_u_at * C_u_ta / (C_u_ta + C_u_at) if C_u_ta + C_u_at != 0 else (1 / self.omega)
+            # set final alpha_u to 1 if C_u_ta + C_u_at == 0
+            self.alpha_u[u][x] = C_u_X
+            # We have only one auxiliary action 'V'
+            self.alpha_u[u]['alpha'] = self.omega * self.rho * C_u_X
+
+        # generate item-set based on co-selection
+        # build U
+        for i in self.I_u_t_train[u]:
+            self.U_item[i].add(u)
+        # build S
+        # TODO: check loop j is correct
+        for i in self.item_list:
+            for j in self.I_u_t_train[u]:
+                # If more than 2 users have target action on i and j, then j is added in S[i]
+                if len(self.U_item[i].intersection(self.U_item[j])) >= 2:
+                    self.S[i].add(j)
+        for i in self.I_u_t_train[u]:
+            for j in self.item_list - self.I_u_t_train[u]:
+                # If more than 2 users have target action on i and j, then j is added in S[i]
+                if len(self.U_item[i].intersection(self.U_item[j])) >= 2:
+                    self.S[i].add(j)
+
+        # If u not exists, we initialize her user vector
+        if u_already_exist:
+            # set random seed
+            cupy.random.seed(self.random_state)
+            u_vector = cupy.random.normal(loc=0.0, scale=0.1, size=(1, self.dim + 1))
+            u_vector[:, -1] = 1.0
+            self.U = cupy.concatenate((self.U, u_vector))  # here I think u is the last row -> TODO check it
+            assert (self.U[u, :] == u_vector).all(), "New User Int ID assigned wrongly"
+            # initialize estimation
+            self.estimation = cupy.dot(self.U, self.V)
+        else:
+            # we don't have to do anything
+            u_vector = self.U[u, :].copy()
+        # start training
+
+
+
+        return None
 
     def get_params(self, deep=True):
         # suppose this estimator has parameters "alpha" and "recursive"
