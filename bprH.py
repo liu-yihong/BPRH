@@ -555,7 +555,7 @@ class bprH(object):
             # Next is the case when user u is in train data
             # get the ranking for user u's pref of item
             user_rec_dict[u] = set()
-            est_pref_sort_index = est_pref_of_u.argsort()[::-1].get()
+            est_pref_sort_index = est_pref_of_u.argsort()[::-1]
             rec_item_cnt = 0
             # case of recommending on test data
             if train_data_as_reference_flag:
