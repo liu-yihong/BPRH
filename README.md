@@ -37,7 +37,17 @@ Since repeated vector and matrix manipulations are involved in BPRH model. [bprH
 |    0.1    |          0.001          |   0.0001   | 0.014 | 0.011 | 0.058 | 0.089 | 0.859 |
 |    0.1    |          0.001          |   0.001    | 0.016 | 0.011 | 0.069 | 0.097 | 0.859 |
 
-We set the number of iterations as 720,000 in this analysis.
+We set the number of iterations as 720,000 for the table above. <img src="https://render.githubusercontent.com/render/math?math=\gamma = 0.1, \lambda_{u} = \lambda_{v} = 0.00001, \lambda_{b} = 0.1"> is selected for a 5-folds cross validation on 600,000 iterations. Results are presented belows.
+
+| FOLD NUM |     P@5     |     P@10    |     R@5     |     R@10    |     AUC     |
+|:--------:|:-----------:|:-----------:|:-----------:|:-----------:|:-----------:|
+|     0    | 0.051182432 | 0.032685811 | 0.198458486 | 0.247398244 | 0.872067812 |
+|     1    | 0.048061105 | 0.031257344 | 0.198704581 | 0.253552421 | 0.869966503 |
+|     2    | 0.048014226 | 0.031298162 | 0.204597253 | 0.259258681 | 0.870846781 |
+|     3    | 0.045968712 | 0.030024067 | 0.195642696 | 0.250112863 | 0.863704698 |
+|     4    | 0.046420048 | 0.031264916 | 0.191670788 | 0.253109041 | 0.874987955 |
+|    AVG   | 0.047929305 |  0.03130606 | 0.197814761 |  0.25268625 |  0.87031475 |
+|    STD   | 0.002045067 | 0.000942251 | 0.004734835 | 0.004435966 | 0.004153589 |
 
 ## Implementation Detail
 
