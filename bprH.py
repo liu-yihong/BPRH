@@ -531,7 +531,7 @@ class bprH(object):
             # In order to address the case when a user is in test but not in train
             # we build Popularity based ranking
 
-            ranking_list = self.train_data.groupby("ItemID").count().UserID.copy()
+            ranking_list = self.train_data[self.train_data.Action == 'P'].groupby("ItemID").count().UserID.copy()
             ranking_list.sort_values(inplace=True, ascending=False)
             ranking_list = ranking_list.index.to_list()
 
@@ -551,7 +551,7 @@ class bprH(object):
                         user_rec_dict[u] = set(ranking_list[:K])
                         continue
 
-            est_pref_of_u = self.estimation[u, :]
+            est_pref_of_u = self.estimation[u, :].copy()
             # Next is the case when user u is in train data
             # get the ranking for user u's pref of item
             user_rec_dict[u] = set()
