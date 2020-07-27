@@ -668,7 +668,7 @@ class bprH(object):
         # TODO check items from new data is aligned with self.item_original_id_list
         assert set(cleaned_new_user_data.ItemID).issubset(set(self.item_original_id_list))
         # TODO check Actions type are in ['V', 'P']
-        assert set(cleaned_new_user_data.Action) == {'V', 'P'}, "New User Data Contains Wrong Action Type"
+        assert set(cleaned_new_user_data.Action).issubset({'V', 'P'}), "New User Data Contains Wrong Action Type"
 
         # check u in user_original_id_list or not (u exists or not)
         u_original_id = set(cleaned_new_user_data.UserID).pop()
@@ -741,6 +741,7 @@ class bprH(object):
 
         # start training
         loss_u = 0.0
+        convergence_hit = 0
         all_item = set(self.item_list)
         with trange(max_iteration) as t:
             for index in t:
@@ -881,7 +882,7 @@ class bprH(object):
                     # at these cases, we ignore this user and continue the loop
                     continue
 
-                ratio_delta_loss = new_loss_u - loss_u / loss_u if loss_u != 0.0 else 1.0
+                ratio_delta_loss = abs(new_loss_u - loss_u) / abs(loss_u) if loss_u != 0.0 else 1.0
                 loss_u = new_loss_u
 
                 # Postfix will be displayed on the right,
@@ -893,11 +894,15 @@ class bprH(object):
                     len_K=len(K))
 
                 if abs(ratio_delta_loss) < convergence_ratio_threshold:
-                    break
+                    convergence_hit += 1
+                    if convergence_hit == 49:
+                        break
+                else:
+                    convergence_hit = 0
 
         # recalculate estimation
         self.estimation[u, :] = cupy.dot(self.U[u, :], self.V)
-        # TODO: after convergence, we recommend top-k items for user u
+        # after convergence, we recommend top-k items for user u
         est_pref_of_u = self.estimation[u, :].copy()
         # Next is the case when user u is in train data
         # get the ranking for user u's pref of item
@@ -916,7 +921,7 @@ class bprH(object):
         # case of recommending on train data
         else:
             user_rec_dict = set(est_pref_sort_index[:topK])
-        return user_rec_dict
+        return [self.item_original_id_list[item_idx] for item_idx in user_rec_dict]
 
     def get_params(self, deep=True):
         # suppose this estimator has parameters "alpha" and "recursive"

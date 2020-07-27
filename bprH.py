@@ -453,21 +453,21 @@ class bprH(object):
                     continue
 
                 # calculate loss
-                # f_Theta = cupy.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + cupy.log(sigmoid(r_hat_uJK))
-                # regula = self.lambda_u * cupy.linalg.norm(U_u, ord=2) + self.lambda_v * (
-                #        (cupy.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
-                #            cupy.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
-                #            cupy.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
+                # f_Theta = np.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + np.log(sigmoid(r_hat_uJK))
+                # regula = self.lambda_u * np.linalg.norm(U_u, ord=2) + self.lambda_v * (
+                #        (np.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) + (
+                #            np.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) + (
+                #            np.linalg.norm(V_bar_K, ord=2)) if len(K) != 0 else 0) + self.lambda_b * (
                 #                     (b_I if len(I) != 0 else 0) ** 2 + (b_J if len(J) != 0 else 0) ** 2 + (
                 #                 b_K if len(K) != 0 else 0) ** 2)
                 # bprh_loss = f_Theta - regula
 
                 # update estimation
                 old_estimation = self.estimation.copy()
-                # self.estimation = cupy.dot(self.U, self.V)
+                # self.estimation = np.dot(self.U, self.V)
                 all_sampled_item = sorted(set.union(I, J, K))
                 # for sampled_item in all_sampled_item:
-                #    self.estimation[:, sampled_item] = cupy.dot(self.U, self.V[:, sampled_item])
+                #    self.estimation[:, sampled_item] = np.dot(self.U, self.V[:, sampled_item])
                 self.estimation[:, all_sampled_item] = np.dot(self.U, self.V[:, all_sampled_item])
                 # estimation changed
                 est_changed = np.linalg.norm(self.estimation - old_estimation)
@@ -652,12 +652,25 @@ class bprH(object):
         avg_auc = scoring_average[3]
         return scoring_list, precision_K, recall_K, avg_auc
 
-    def online_updating_user(self, new_user_with_data=None):
-        assert len(set(new_user_with_data.UserID)) == 1, "New User Data should only include one user."
-        new_user_with_data.drop_duplicates(inplace=True)
+    def online_updating_user(self,
+                             new_user_with_data=None,
+                             coselection=True,
+                             convergence_ratio_threshold=0.0001,
+                             max_iteration = 1000,
+                             topK=5,
+                             input_data_as_reference=True):
+        cleaned_new_user_data = new_user_with_data.copy()
+        cleaned_new_user_data.drop_duplicates(inplace=True)
+
+        assert len(set(cleaned_new_user_data.UserID)) == 1, "New User Data should only include one user."
+        cleaned_new_user_data.drop_duplicates(inplace=True)
+        # TODO check items from new data is aligned with self.item_original_id_list
+        assert set(cleaned_new_user_data.ItemID).issubset(set(self.item_original_id_list))
+        # TODO check Actions type are in ['V', 'P']
+        assert set(cleaned_new_user_data.Action).issubset({'V', 'P'}), "New User Data Contains Wrong Action Type"
 
         # check u in user_original_id_list or not (u exists or not)
-        u_original_id = set(new_user_with_data.UserID).pop()
+        u_original_id = set(cleaned_new_user_data.UserID).pop()
         if u_original_id not in self.user_original_id_list:
             u_already_exist = False
             self.user_original_id_list.append(u_original_id)
@@ -668,11 +681,17 @@ class bprH(object):
         else:
             u_already_exist = True
             u = self.user_original_id_list.index(u_original_id)
+        # convert itemid into index id
+        cleaned_new_user_data.ItemID = cleaned_new_user_data.ItemID.apply(lambda x: self.item_original_id_list.index(x))
 
         # build I_u_t, I_u_a for user u
-        assert len(self.S) != 0 & len(self.U_item) != 0, "Item-set Coselection Not Initialized."
-        self.I_u_t_train[u] = self.I_u_t_train[u].union(set(new_user_with_data[new_user_with_data.Action == 'P'].ItemID)) if u_already_exist else set(new_user_with_data[new_user_with_data.Action == 'P'].ItemID)
-        self.I_u_a_train[u] = self.I_u_a_train[u].union(set(new_user_with_data[new_user_with_data.Action == 'V'].ItemID)) if u_already_exist else set(new_user_with_data[new_user_with_data.Action == 'V'].ItemID)
+        assert (len(self.S) != 0) & (len(self.U_item) != 0), "Item-set Coselection Not Initialized."
+        self.I_u_t_train[u] = self.I_u_t_train[u].union(
+            set(cleaned_new_user_data[cleaned_new_user_data.Action == 'P'].ItemID)) if u_already_exist else set(
+            cleaned_new_user_data[cleaned_new_user_data.Action == 'P'].ItemID)
+        self.I_u_a_train[u] = self.I_u_a_train[u].union(
+            set(cleaned_new_user_data[cleaned_new_user_data.Action == 'V'].ItemID)) if u_already_exist else set(
+            cleaned_new_user_data[cleaned_new_user_data.Action == 'V'].ItemID)
 
         # calculate auxiliary-target correlation C
         self.alpha_u[u] = dict()
@@ -706,14 +725,10 @@ class bprH(object):
                 # If more than 2 users have target action on i and j, then j is added in S[i]
                 if len(self.U_item[i].intersection(self.U_item[j])) >= 2:
                     self.S[i].add(j)
-        for i in self.I_u_t_train[u]:
-            for j in self.item_list - self.I_u_t_train[u]:
-                # If more than 2 users have target action on i and j, then j is added in S[i]
-                if len(self.U_item[i].intersection(self.U_item[j])) >= 2:
-                    self.S[i].add(j)
+                    self.S[j].add(i)
 
         # If u not exists, we initialize her user vector
-        if u_already_exist:
+        if not u_already_exist:
             # set random seed
             np.random.seed(self.random_state)
             u_vector = np.random.normal(loc=0.0, scale=0.1, size=(1, self.dim + 1))
@@ -722,14 +737,190 @@ class bprH(object):
             assert (self.U[u, :] == u_vector).all(), "New User Int ID assigned wrongly"
             # initialize estimation
             self.estimation = np.dot(self.U, self.V)
-        else:
-            # we don't have to do anything
-            u_vector = self.U[u, :].copy()
+
         # start training
+        loss_u = 0.0
+        convergence_hit = 0
+        all_item = set(self.item_list)
+        with trange(max_iteration) as t:
+            for index in t:
+                # build I
+                # uniformly sample a item i from I_u_t
+                I_u_t = self.I_u_t_train[u]
+                if len(I_u_t) != 0:
+                    i = choice(sorted(I_u_t))
+                    # build I = I_u_t cap S_i
+                    if coselection:
+                        I = I_u_t.intersection(self.S[i])
+                    else:
+                        # if no coselection, we set I as the set of purchased items by user u
+                        # no uniform sampling, like COFISET
+                        I = I_u_t
+                else:  # if no item in I_u_t, then set I to empty set
+                    i = None
+                    I = set()
 
+                # build J, since we only have one auxiliary action, we follow the uniform sampling
+                I_u_oa = self.I_u_a_train[u] - I_u_t
+                if len(I_u_oa) != 0:
+                    j = choice(sorted(I_u_oa))
+                    if coselection:
+                        # NOTE: typo in paper?
+                        J = I_u_oa.intersection(self.S[j])
+                    else:
+                        # if no coselection, we set J as the set of only-auxiliary items by user u
+                        # no uniform sampling, like COFISET
+                        J = I_u_oa
+                else:  # if no item in I_u_oa, then set J to empty set
+                    j = None
+                    J = set()
 
+                # build K
+                I_u_n = all_item - I_u_t - I_u_oa
+                if len(I_u_n) != 0:
+                    k = choice(sorted(I_u_n))
+                    # build K
+                    if coselection:
+                        # NOTE: typo in paper?
+                        K = I_u_n.intersection(self.S[k])
+                    else:
+                        # if no coselection, we set K as the set of no-action items by user u
+                        # no uniform sampling, like COFISET
+                        K = I_u_n
+                else:  # if no item in I_u_n, then set K to empty set
+                    k = None
+                    K = set()
 
-        return None
+                # calculate intermediate variables
+                # get specific alpha_u
+                spec_alpha_u = self.alpha_u[u]['alpha']
+
+                U_u = self.U[u, :-1].copy()
+                sorted_I = sorted(I)
+                sorted_J = sorted(J)
+                sorted_K = sorted(K)
+
+                # get r_hat_uIJ, r_hat_uJK, r_hat_uIK
+                r_hat_uI = np.average(self.estimation[u, sorted_I]) if len(
+                    I) != 0 else np.array([0])
+                r_hat_uJ = np.average(self.estimation[u, sorted_J]) if len(
+                    J) != 0 else np.array([0])
+                r_hat_uK = np.average(self.estimation[u, sorted_K]) if len(
+                    K) != 0 else np.array([0])
+
+                r_hat_uIJ = r_hat_uI - r_hat_uJ
+                r_hat_uJK = r_hat_uJ - r_hat_uK
+                r_hat_uIK = r_hat_uI - r_hat_uK
+                # get V_bar_I, V_bar_J, V_bar_K
+                V_bar_I = np.average(self.V[:-1, sorted_I], axis=1) if len(
+                    I) != 0 else np.zeros(
+                    shape=(self.dim,))
+                V_bar_J = np.average(self.V[:-1, sorted_J], axis=1) if len(
+                    J) != 0 else np.zeros(
+                    shape=(self.dim,))
+                V_bar_K = np.average(self.V[:-1, sorted_K], axis=1) if len(
+                    K) != 0 else np.zeros(
+                    shape=(self.dim,))
+                # get b_I, b_J, b_K
+                b_I = np.average(self.V[-1, sorted_I]) if len(I) != 0 else np.array([0])
+                b_J = np.average(self.V[-1, sorted_J]) if len(J) != 0 else np.array([0])
+                b_K = np.average(self.V[-1, sorted_K]) if len(K) != 0 else np.array([0])
+
+                # here we want to examine the condition of empty sets
+                indicator_I = indicator(len(I) == 0)
+                indicator_J = indicator(len(J) == 0)
+                indicator_K = indicator(len(K) == 0)
+                indicator_sum = indicator_I + indicator_J + indicator_K
+
+                if 0 <= indicator_sum <= 1:
+                    # these are the cases when only one set are empty or no set is empty
+                    # when all three are not empty, or I is empty, or K is empty, it is
+                    # easy to rewrite the obj by multiplying the indicator
+                    # when J is empty, we have to rewrite the obj
+                    if indicator_J == 1:
+                        # when J is empty
+
+                        # NABLA U_u
+                        df_dUu = sigmoid(- r_hat_uIK) * (V_bar_I - V_bar_K)
+                        dR_dUu = 2 * self.lambda_u * U_u
+                        # update U_u = U_u + gamma * (df_dUu - dR_dUu)
+                        self.U[u, :-1] += self.gamma * (df_dUu - dR_dUu)
+
+                        # calculate loss
+                        f_Theta = np.log(sigmoid(r_hat_uIK))
+                        regular = self.lambda_u * np.linalg.norm(U_u, ord=2) + \
+                                  self.lambda_v * (
+                                              np.linalg.norm(V_bar_I, ord=2) + np.linalg.norm(V_bar_K, ord=2)) + \
+                                  self.lambda_b * (b_I ** 2 + b_K ** 2)
+                        new_loss_u = f_Theta - regular
+
+                    else:
+                        # when J is not empty
+                        # NABLA U_u
+                        df_dUu = (1 - indicator_I) * sigmoid(- r_hat_uIJ / spec_alpha_u) / spec_alpha_u * (
+                                V_bar_I - V_bar_J) + \
+                                 (1 - indicator_K) * sigmoid(- r_hat_uJK) * (V_bar_J - V_bar_K)
+                        dR_dUu = 2 * self.lambda_u * U_u
+                        # update U_u = U_u + gamma * (df_dUu - dR_dUu)
+                        self.U[u, :-1] += self.gamma * (df_dUu - dR_dUu)
+
+                        # calculate loss
+                        f_Theta = (1 - indicator_I) * np.log(sigmoid(r_hat_uIJ / spec_alpha_u)) + \
+                                  (1 - indicator_K) * np.log(sigmoid(r_hat_uJK))
+                        regula = self.lambda_u * np.linalg.norm(U_u, ord=2) + \
+                                 self.lambda_v * ((np.linalg.norm(V_bar_I, ord=2) if len(I) != 0 else 0) +
+                                                  (np.linalg.norm(V_bar_J, ord=2) if len(J) != 0 else 0) +
+                                                  (np.linalg.norm(V_bar_K, ord=2) if len(K) != 0 else 0)) + \
+                                 self.lambda_b * ((b_I if len(I) != 0 else 0) ** 2 +
+                                                  (b_J if len(J) != 0 else 0) ** 2 +
+                                                  (b_K if len(K) != 0 else 0) ** 2)
+                        new_loss_u = f_Theta - regula
+
+                else:
+                    # these are the cases when at least two sets are empty
+                    # at these cases, we ignore this user and continue the loop
+                    continue
+
+                ratio_delta_loss = abs(new_loss_u - loss_u) / abs(loss_u) if loss_u != 0.0 else 1.0
+                loss_u = new_loss_u
+
+                # Postfix will be displayed on the right,
+                # formatted automatically based on argument's datatype
+                t.set_postfix(
+                    ratio_delta_loss=ratio_delta_loss,
+                    len_I=len(I),
+                    len_J=len(J),
+                    len_K=len(K))
+
+                if abs(ratio_delta_loss) < convergence_ratio_threshold:
+                    convergence_hit += 1
+                    if convergence_hit == 49:
+                        break
+                else:
+                    convergence_hit = 0
+
+        # recalculate estimation
+        self.estimation[u, :] = np.dot(self.U[u, :], self.V)
+        # after convergence, we recommend top-k items for user u
+        est_pref_of_u = self.estimation[u, :].copy()
+        # Next is the case when user u is in train data
+        # get the ranking for user u's pref of item
+        user_rec_dict = set()
+        est_pref_sort_index = est_pref_of_u.argsort()[::-1]
+        rec_item_cnt = 0
+        # case of recommending on test data
+        if input_data_as_reference:
+            for item_id in est_pref_sort_index:
+                if rec_item_cnt == topK:
+                    break
+                # we only consider the item that is not in train data for user u
+                if item_id not in self.I_u_t_train[u]:
+                    user_rec_dict.add(item_id)
+                    rec_item_cnt += 1
+        # case of recommending on train data
+        else:
+            user_rec_dict = set(est_pref_sort_index[:topK])
+        return [self.item_original_id_list[item_idx] for item_idx in user_rec_dict]
 
     def get_params(self, deep=True):
         # suppose this estimator has parameters "alpha" and "recursive"
