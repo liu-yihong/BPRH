@@ -61,7 +61,8 @@ This section includes the implementation details unmetioned in [Qiu, Huihuai, et
 5. BPRH model does not consider user bias. So we add a all-ones-column at the last column in user matrix and set the last row of item matrix as item bias [(bprH_gpu.py - Line 255)](https://github.com/liu-yihong/BPRH/blob/f8f74de1bd97783f7d5274d05096cbfc96fc0136/bprH_gpu.py#L255). We utilize normal distribution with 0 expectation and 0.1 standard deviation to initialize user and item matrices.
 6. When constructing item-sets <img src="https://render.githubusercontent.com/render/math?math=I, J, K">, we may come across some empty item-set because of random spliting train and test dataset. [bprH_gpu.py - Line 363](https://github.com/liu-yihong/BPRH/blob/f8f74de1bd97783f7d5274d05096cbfc96fc0136/bprH_gpu.py#L363) address this issue. For example, when <img src="https://render.githubusercontent.com/render/math?math=J = \emptyset">, the objective function of BPRH and corresponding gradients downgrade to COFISET model.
 7. When recommending items for users, a user might appear in test and not in train. In our implementation, we can choose to ignore this type of user, i.e. we do not recommend for this type of user. In another option, we use item popularity of target action learned from training data to make recommendations for this type of users. [bprH_gpu.py - Line 520](https://github.com/liu-yihong/BPRH/blob/f8f74de1bd97783f7d5274d05096cbfc96fc0136/bprH_gpu.py#L520) solve this issue. What's more, we exclude user <img src="https://render.githubusercontent.com/render/math?math=u">'s purchased items from user <img src="https://render.githubusercontent.com/render/math?math=u">'s recommendation lists.
-
+8. User online updating scheme.
+![User Updating Scheme](https://liu-yihong.github.io/2020/06/26/Understanding-BPR-COFISET-and-BPRH/BPRH-online-updating-min.png)
 
 ## Mathematical Detail
 
