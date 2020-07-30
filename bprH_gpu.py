@@ -32,6 +32,7 @@ def indicator_len(z):
 class bprH(object):
 
     def __init__(self, dim=10, omega=1, rho=1, lambda_u=0.5, lambda_v=0.1, lambda_b=0.1, gamma=0.001, num_iter=200,
+                 decay_rate=1.0,
                  random_state=None,
                  existed_model_path=None):
         """
@@ -54,6 +55,7 @@ class bprH(object):
         self.gamma = gamma
         self.random_state = random_state
         self.num_iter = num_iter
+        self.decay_rate = decay_rate
 
         self.user_original_id_list = None
         self.item_original_id_list = None
@@ -548,9 +550,8 @@ class bprH(object):
                     continue
                 else:
                     # otherwise, we use Popularity based ranking for this user
-                    if u not in user_in_train:
-                        user_rec_dict[u] = set(ranking_list[:K])
-                        continue
+                    user_rec_dict[u] = set(ranking_list[:K])
+                    continue
 
             est_pref_of_u = self.estimation[u, :].copy()
             # Next is the case when user u is in train data
@@ -623,7 +624,7 @@ class bprH(object):
             # Otherwise, we continue
             rec_list_for_user_u = user_rec_dict[u]
             # get precision and recall
-            I_u_t = set(ground_truth_cleaned[ground_truth_cleaned.UserID == u].ItemID)
+            I_u_t = I_u_t_in_auc[u]
             # what if the ground truth size for user u is smaller than K
             if use_min_of_K_and_size_of_groundtruth:
                 precision_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / min(K, len(I_u_t))
