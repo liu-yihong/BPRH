@@ -34,7 +34,8 @@ class bprH(object):
     def __init__(self, dim=10, omega=1, rho=1, lambda_u=0.5, lambda_v=0.1, lambda_b=0.1, gamma=0.001, num_iter=200,
                  decay_rate=1.0,
                  random_state=None,
-                 existed_model_path=None):
+                 existed_model_path=None,
+                 gpu_device=0):
         """
         Initializing class instance bprH
         :param dim: the dimension of latent vector
@@ -85,6 +86,10 @@ class bprH(object):
         self.eval_hist = []
 
         self.existed_model_path = existed_model_path
+
+        total_device_cnt = cupy.cuda.runtime.getDeviceCount()
+        assert gpu_device + 1 <= total_device_cnt, "Assigned GPU device ID exceeds Total Device Number " + str(total_device_cnt)
+        cupy.cuda.runtime.setDevice(int_device=gpu_device)
 
         if existed_model_path is not None:
             print("Loading Pre-trianed Model")
