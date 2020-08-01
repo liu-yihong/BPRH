@@ -89,7 +89,7 @@ class bprH(object):
 
         total_device_cnt = cupy.cuda.runtime.getDeviceCount()
         assert gpu_device + 1 <= total_device_cnt, "Assigned GPU device ID exceeds Total Device Number " + str(total_device_cnt)
-        cupy.cuda.runtime.setDevice(int_device=gpu_device)
+        cupy.cuda.runtime.setDevice(gpu_device)
 
         if existed_model_path is not None:
             print("Loading Pre-trianed Model")
