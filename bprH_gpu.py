@@ -13,6 +13,7 @@ from tqdm import tqdm, trange
 from livelossplot import PlotLosses
 
 
+
 def adv_index(list_to_index, list_to_match):
     return [ind for ind, match in enumerate(list_to_index) if match in list_to_match]
 
@@ -665,15 +666,16 @@ class bprH(object):
                              convergence_ratio_threshold=0.0001,
                              max_iteration = 1000,
                              topK=5,
-                             input_data_as_reference=True):
+                             input_P_as_reference=True,
+                             input_V_as_reference=False):
         cleaned_new_user_data = new_user_with_data.copy()
         cleaned_new_user_data.drop_duplicates(inplace=True)
 
         assert len(set(cleaned_new_user_data.UserID)) == 1, "New User Data should only include one user."
         cleaned_new_user_data.drop_duplicates(inplace=True)
-        # TODO check items from new data is aligned with self.item_original_id_list
+        # check items from new data is aligned with self.item_original_id_list
         assert set(cleaned_new_user_data.ItemID).issubset(set(self.item_original_id_list))
-        # TODO check Actions type are in ['V', 'P']
+        # check Actions type are in ['V', 'P']
         assert set(cleaned_new_user_data.Action).issubset({'V', 'P'}), "New User Data Contains Wrong Action Type"
 
         # check u in user_original_id_list or not (u exists or not)
@@ -726,7 +728,6 @@ class bprH(object):
         for i in self.I_u_t_train[u]:
             self.U_item[i].add(u)
         # build S
-        # TODO: check loop j is correct
         for i in self.item_list:
             for j in self.I_u_t_train[u]:
                 # If more than 2 users have target action on i and j, then j is added in S[i]
@@ -912,22 +913,39 @@ class bprH(object):
         est_pref_of_u = self.estimation[u, :].copy()
         # Next is the case when user u is in train data
         # get the ranking for user u's pref of item
-        user_rec_dict = set()
+        user_rec_dict = dict()
         est_pref_sort_index = est_pref_of_u.argsort()[::-1].get()
         rec_item_cnt = 0
         # case of recommending on test data
-        if input_data_as_reference:
-            for item_id in est_pref_sort_index:
-                if rec_item_cnt == topK:
-                    break
-                # we only consider the item that is not in train data for user u
-                if item_id not in self.I_u_t_train[u]:
-                    user_rec_dict.add(item_id)
-                    rec_item_cnt += 1
-        # case of recommending on train data
-        else:
-            user_rec_dict = set(est_pref_sort_index[:topK])
-        return [self.item_original_id_list[item_idx] for item_idx in user_rec_dict]
+        #if input_P_as_reference:
+        #    for item_id in est_pref_sort_index:
+        #        if rec_item_cnt == topK:
+        #            break
+        #        # we only consider the item that is not in train data for user u
+        #        if item_id not in self.I_u_t_train[u]:
+        #            user_rec_dict[self.item_original_id_list[item_id]] = est_pref_of_u[item_id]
+        #            rec_item_cnt += 1
+        ## case of recommending on train data
+        #else:
+        #    for item_id in set(est_pref_sort_index[:topK]):
+        #        user_rec_dict[self.item_original_id_list[item_id]] = est_pref_of_u[item_id]
+
+        for item_id in est_pref_sort_index:
+            if rec_item_cnt == topK:
+                break
+            # we only consider the item that is not in train data for user u
+            item_in_P = item_id in I_t_u
+            item_in_A = item_id in I_a_u
+            if item_in_P & input_P_as_reference:
+                continue
+            if item_in_A & input_V_as_reference:
+                continue
+
+            user_rec_dict[self.item_original_id_list[item_id]] = est_pref_of_u[item_id]
+            rec_item_cnt += 1
+
+        return user_rec_dict
+        #return [item_idx for item_idx in user_rec_dict]
 
     def get_params(self, deep=True):
         # suppose this estimator has parameters "alpha" and "recursive"
