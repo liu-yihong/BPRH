@@ -13,7 +13,6 @@ from tqdm import tqdm, trange
 from livelossplot import PlotLosses
 
 
-
 def adv_index(list_to_index, list_to_match):
     return [ind for ind, match in enumerate(list_to_index) if match in list_to_match]
 
@@ -28,6 +27,24 @@ def indicator(z):
 
 def indicator_len(z):
     return len(z) if len(z) != 0 else 1
+
+
+def build_U_in_online_updating(u, I_u_t_train, U_item):
+    U_item_new = U_item.copy()
+    for i in I_u_t_train[u]:
+        U_item_new[i].add(u)
+    return U_item_new
+
+
+def build_S_in_online_updating(u, item_list, I_u_t_train, U_item, S):
+    S_new = S.copy()
+    for i in item_list:
+        for j in I_u_t_train[u]:
+            # If more than 2 users have target action on i and j, then j is added in S[i]
+            if len(U_item[i].intersection(U_item[j])) >= 2:
+                S_new[i].add(j)
+                S_new[j].add(i)
+    return S_new
 
 
 class bprH(object):
@@ -89,7 +106,8 @@ class bprH(object):
         self.existed_model_path = existed_model_path
 
         total_device_cnt = cupy.cuda.runtime.getDeviceCount()
-        assert gpu_device + 1 <= total_device_cnt, "Assigned GPU device ID exceeds Total Device Number " + str(total_device_cnt)
+        assert gpu_device + 1 <= total_device_cnt, "Assigned GPU device ID exceeds Total Device Number " + str(
+            total_device_cnt)
         cupy.cuda.runtime.setDevice(gpu_device)
 
         if existed_model_path is not None:
@@ -664,7 +682,7 @@ class bprH(object):
                              new_user_with_data=None,
                              coselection=True,
                              convergence_ratio_threshold=0.0001,
-                             max_iteration = 1000,
+                             max_iteration=1000,
                              topK=5,
                              input_P_as_reference=True,
                              input_V_as_reference=False):
@@ -674,9 +692,10 @@ class bprH(object):
         assert len(set(cleaned_new_user_data.UserID)) == 1, "New User Data should only include one user."
         cleaned_new_user_data.drop_duplicates(inplace=True)
         # check items from new data is aligned with self.item_original_id_list
-        assert set(cleaned_new_user_data.ItemID).issubset(set(self.item_original_id_list))
+        assert set(cleaned_new_user_data.ItemID).issubset(
+            set(self.item_original_id_list)), "New Data Contains Wrong Item ID"
         # check Actions type are in ['V', 'P']
-        assert set(cleaned_new_user_data.Action).issubset({'V', 'P'}), "New User Data Contains Wrong Action Type"
+        assert set(cleaned_new_user_data.Action).issubset({'V', 'P'}), "New Data Contains Wrong Action Type"
 
         # check u in user_original_id_list or not (u exists or not)
         u_original_id = set(cleaned_new_user_data.UserID).pop()
@@ -727,6 +746,7 @@ class bprH(object):
         # build U
         for i in self.I_u_t_train[u]:
             self.U_item[i].add(u)
+
         # build S
         for i in self.item_list:
             for j in self.I_u_t_train[u]:
@@ -741,10 +761,11 @@ class bprH(object):
             cupy.random.seed(self.random_state)
             u_vector = cupy.random.normal(loc=0.0, scale=0.1, size=(1, self.dim + 1))
             u_vector[:, -1] = 1.0
-            self.U = cupy.concatenate((self.U, u_vector))  # here I think u is the last row -> TODO check it
+            self.U = cupy.concatenate((self.U, u_vector))
             assert (self.U[u, :] == u_vector).all(), "New User Int ID assigned wrongly"
             # initialize estimation
             self.estimation = cupy.dot(self.U, self.V)
+            del u_vector
 
         # start training
         loss_u = 0.0
@@ -858,7 +879,7 @@ class bprH(object):
                         f_Theta = cupy.log(sigmoid(r_hat_uIK))
                         regular = self.lambda_u * cupy.linalg.norm(U_u, ord=2) + \
                                   self.lambda_v * (
-                                              cupy.linalg.norm(V_bar_I, ord=2) + cupy.linalg.norm(V_bar_K, ord=2)) + \
+                                          cupy.linalg.norm(V_bar_I, ord=2) + cupy.linalg.norm(V_bar_K, ord=2)) + \
                                   self.lambda_b * (b_I ** 2 + b_K ** 2)
                         new_loss_u = f_Theta - regular
 
@@ -907,6 +928,8 @@ class bprH(object):
                 else:
                     convergence_hit = 0
 
+                del U_u, r_hat_uI, r_hat_uJ, r_hat_uK, r_hat_uIJ, r_hat_uJK, r_hat_uIK, V_bar_I, V_bar_J, V_bar_K, b_I, b_J, b_K, df_dUu, dR_dUu
+
         # recalculate estimation
         self.estimation[u, :] = cupy.dot(self.U[u, :], self.V)
         # after convergence, we recommend top-k items for user u
@@ -917,7 +940,7 @@ class bprH(object):
         est_pref_sort_index = est_pref_of_u.argsort()[::-1].get()
         rec_item_cnt = 0
         # case of recommending on test data
-        #if input_P_as_reference:
+        # if input_P_as_reference:
         #    for item_id in est_pref_sort_index:
         #        if rec_item_cnt == topK:
         #            break
@@ -926,7 +949,7 @@ class bprH(object):
         #            user_rec_dict[self.item_original_id_list[item_id]] = est_pref_of_u[item_id]
         #            rec_item_cnt += 1
         ## case of recommending on train data
-        #else:
+        # else:
         #    for item_id in set(est_pref_sort_index[:topK]):
         #        user_rec_dict[self.item_original_id_list[item_id]] = est_pref_of_u[item_id]
 
@@ -944,8 +967,13 @@ class bprH(object):
             user_rec_dict[self.item_original_id_list[item_id]] = est_pref_of_u[item_id]
             rec_item_cnt += 1
 
+        del est_pref_of_u, est_pref_sort_index
+        # free all unused memory in GPU
+        mempool = cupy.get_default_memory_pool()
+        mempool.free_all_blocks()
+        # return rec dict
         return user_rec_dict
-        #return [item_idx for item_idx in user_rec_dict]
+        # return [item_idx for item_idx in user_rec_dict]
 
     def get_params(self, deep=True):
         # suppose this estimator has parameters "alpha" and "recursive"
