@@ -496,6 +496,7 @@ class bprH(object):
                 # for sampled_item in all_sampled_item:
                 #    self.estimation[:, sampled_item] = cupy.dot(self.U, self.V[:, sampled_item])
                 self.estimation[:, all_sampled_item] = cupy.dot(self.U, self.V[:, all_sampled_item])
+
                 # estimation changed
                 est_changed = cupy.linalg.norm(self.estimation - old_estimation)
 
@@ -539,6 +540,8 @@ class bprH(object):
                 del U_u, r_hat_uI, r_hat_uJ, r_hat_uK, r_hat_uIJ, r_hat_uJK, r_hat_uIK, V_bar_I, V_bar_J, V_bar_K, b_I, b_J, b_K, df_dUu, dR_dUu
                 mempool = cupy.get_default_memory_pool()
                 mempool.free_all_blocks()
+
+            print("Training Finished")
 
     def predict_estimation(self, user_to_predict, item_to_predict=None):
         if item_to_predict is None:
