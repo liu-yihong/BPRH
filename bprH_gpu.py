@@ -496,6 +496,7 @@ class bprH(object):
                 # for sampled_item in all_sampled_item:
                 #    self.estimation[:, sampled_item] = cupy.dot(self.U, self.V[:, sampled_item])
                 self.estimation[:, all_sampled_item] = cupy.dot(self.U, self.V[:, all_sampled_item])
+                self.estimation[u, :] = cupy.dot(self.U[u, :], self.V)
 
                 # estimation changed
                 est_changed = cupy.linalg.norm(self.estimation - old_estimation)

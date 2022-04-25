@@ -469,6 +469,7 @@ class bprH(object):
                 # for sampled_item in all_sampled_item:
                 #    self.estimation[:, sampled_item] = np.dot(self.U, self.V[:, sampled_item])
                 self.estimation[:, all_sampled_item] = np.dot(self.U, self.V[:, all_sampled_item])
+                self.estimation[u, :] = np.dot(self.U[u, :], self.V)
                 # estimation changed
                 est_changed = np.linalg.norm(self.estimation - old_estimation)
 
@@ -632,7 +633,7 @@ class bprH(object):
             recall_K_for_u = len(rec_list_for_user_u.intersection(I_u_t)) / len(
                 I_u_t) if len(I_u_t) != 0 else np.nan
             # get auc
-            est_pref_of_u = self.estimation[u, :].get()
+            est_pref_of_u = self.estimation[u, :]
             E_u = 0
             indicator_cnt = 0
             for i in I_u_t_in_auc[u]:
